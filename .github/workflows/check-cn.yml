@@ -8,6 +8,10 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
+      test_alert:
+        description: "发一条测试提醒"
+        type: boolean
+        default: false
       chained:
         description: "内部用：由上一轮自动启动"
         type: boolean
@@ -35,6 +39,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Test alert
+        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+        run: |
+          url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
+          gh issue close "$url" > /dev/null
+          python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
+
       # Chained runs always proceed. Anything else steps aside while another
       # run is active, so only one watcher queries Apple at a time.
       - name: Skip if another run is active
@@ -57,6 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           TARGET: ${{ secrets.TARGET_CN }}
+          BARK_URL: ${{ secrets.BARK_URL }}
         run: |
           # A push only smoke-tests one round.
           duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))

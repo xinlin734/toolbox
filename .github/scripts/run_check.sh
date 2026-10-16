@@ -15,6 +15,12 @@ echo "::add-mask::$product"
 echo "::add-mask::$location"
 for word in $location; do echo "::add-mask::$word"; done
 
+# Order link for the alerts; the product slug in it is masked above.
+case "$region" in
+  cn) export BUY_URL="https://www.apple.com.cn/shop/buy-iphone/$product" ;;
+  *) export BUY_URL="https://www.apple.com/shop/buy-iphone/$product" ;;
+esac
+
 args=(--region "$region" --product "$product" --location "$location")
 # Mainland China: "省 市" — keep only stores in that city.
 [ "$region" = cn ] && args+=(--city "${location##* }")

@@ -13,6 +13,10 @@ _spec = importlib.util.spec_from_file_location(
     "notify_delivery", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github", "scripts", "notify_delivery.py"))
 notify_delivery = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(notify_delivery)
+_spec = importlib.util.spec_from_file_location(
+    "push_bark", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github", "scripts", "push_bark.py"))
+push_bark = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(push_bark)
 
 PRODUCT = "phone-x"
 A, B, C = "MX001LL/A", "MX002LL/A", "MX003LL/A"
@@ -392,6 +396,41 @@ class NotifyDeliveryTest(unittest.TestCase):
                 self.assertEqual(json.load(f)[A], "20261106")
         self.assertEqual(run.call_args_list[0].args[0][:3], ["gh", "issue", "create"])
         self.assertEqual(run.call_args_list[1].args[0], ["gh", "issue", "close", "https://github.com/o/r/issues/1"])
+
+
+
+class PushBarkTest(unittest.TestCase):
+    def test_target_accepts_app_url_or_bare_key(self):
+        self.assertEqual(push_bark.target("https://api.day.app/AbC123/这里改成你自己的推送内容"),
+                         ("https://api.day.app", "AbC123"))
+        self.assertEqual(push_bark.target(" https://bark.example.com/K9 "), ("https://bark.example.com", "K9"))
+        self.assertEqual(push_bark.target("AbC123"), ("https://api.day.app", "AbC123"))
+
+    def test_payload_rings_and_links(self):
+        data = push_bark.payload("K", "有货", "- Store A：Phone X", "https://shop/x")
+        self.assertEqual((data["device_key"], data["call"], data["level"], data["url"]),
+                         ("K", "1", "timeSensitive", "https://shop/x"))
+        self.assertNotIn("url", push_bark.payload("K", "t", "b"))
+
+    def test_unset_is_a_no_op(self):
+        with mock.patch.dict(os.environ, {"BARK_URL": ""}), \
+                mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, \
+                contextlib.redirect_stdout(io.StringIO()):
+            push_bark.main("t", "b")
+        urlopen.assert_not_called()
+
+    def test_posts_json_and_never_prints_the_key(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"BARK_URL": "https://api.day.app/SECRETKEY/x"}), \
+                mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, contextlib.redirect_stdout(out):
+            push_bark.main("有货", "- Store A：Phone X", "https://shop/x")
+            req = urlopen.call_args.args[0]
+            self.assertEqual(req.full_url, "https://api.day.app/push")
+            self.assertEqual(json.loads(req.data)["device_key"], "SECRETKEY")
+            urlopen.side_effect = push_bark.urllib.error.URLError("https://api.day.app/SECRETKEY down")
+            push_bark.main("有货", "b")
+        self.assertIn("Bark 推送失败：URLError", out.getvalue())
+        self.assertNotIn("SECRETKEY", out.getvalue())
 
 
 if __name__ == "__main__":
