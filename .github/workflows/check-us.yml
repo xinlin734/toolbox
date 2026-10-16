@@ -1,0 +1,116 @@
+name: check-us
+
+# Each run watches for WATCH_MINUTES and then starts the next run itself, so
+# checks go on back to back; the schedule is only a backup for a broken chain.
+# Pickup is checked every minute, or every 5 minutes while Apple has it
+# switched off; delivery dates every 5 minutes.
+#
+# The repo is public: product and ZIP come from the TARGET secret
+# ("<product> <zip>"), and the checker's output stays on the runner.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "发一条测试提醒"
+        type: boolean
+        default: false
+      chained:
+        description: "内部用：由上一轮自动启动"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - check.py
+      - .github/scripts/**
+      - .github/workflows/check-us.yml
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+env:
+  WATCH_MINUTES: "20"
+  STOCK_ISSUE_TITLE: "有货可自提"
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Test alert
+        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
+          gh issue close "$url" > /dev/null
+
+      # Chained runs always proceed. Anything else steps aside while another
+      # run is active, so only one watcher queries Apple at a time.
+      - name: Skip if another run is active
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHAINED: ${{ github.event_name == 'workflow_dispatch' && inputs.chained }}
+        run: |
+          if [ "$CHAINED" = "true" ] || [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "busy=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          others=$(gh run list --workflow check-us.yml --limit 30 --json databaseId,status,event \
+            --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and .event != \"push\" and .status != \"completed\")] | length")
+          echo "busy=$([ "$others" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore state
+        if: steps.gate.outputs.busy != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: state-us-${{ github.run_id }}
+          restore-keys: state-us-
+
+      - name: Check
+        id: watch
+        if: steps.gate.outputs.busy != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          TARGET: ${{ secrets.TARGET }}
+        run: |
+          # A push only smoke-tests one round.
+          duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
+          bash .github/scripts/run_check.sh us "$TARGET" \
+            --watch 60 --duration "$duration" --closed-interval 300 --stop-on-block \
+            --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt" \
+            --delivery --delivery-file delivery.json \
+            --on-delivery-change "python3 .github/scripts/notify_delivery.py delivery.json state/best.json"
+
+      - name: Save state
+        if: steps.gate.outputs.busy != 'true' && hashFiles('state/best.json') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: state-us-${{ github.run_id }}
+
+      # Hand over to a fresh run on a fresh runner. After a block, wait a
+      # little first instead of asking Apple again right away.
+      - name: Start the next run
+        if: >-
+          !cancelled() && github.event_name != 'push' && steps.gate.outputs.busy != 'true'
+          && (steps.watch.outputs.code == '0' || steps.watch.outputs.code == '2')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.watch.outputs.code }}
+        run: |
+          [ "$CODE" = "2" ] && sleep 120
+          for i in 1 2 3; do
+            gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" -f chained=true && break
+            sleep 15
+          done
