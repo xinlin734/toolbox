@@ -420,7 +420,7 @@ class PushBarkTest(unittest.TestCase):
     def test_payload_rings_and_links(self):
         data = push_bark.payload("K", "有货", "- Store A：Phone X", "https://shop/x")
         self.assertEqual((data["device_key"], data["call"], data["level"], data["url"]),
-                         ("K", "1", "timeSensitive", "https://shop/x"))
+                         ("K", "1", "critical", "https://shop/x"))
         self.assertNotIn("url", push_bark.payload("K", "t", "b"))
 
     def test_unset_is_a_no_op(self):

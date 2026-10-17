@@ -5,8 +5,9 @@
 
 Recipients come from BARK_URL and BARK_URL_2. Each holds whatever the Bark
 app's Copy button gives (a curl command or a https://api.day.app/<key>/...
-address), several of them, or a bare key. The push rings for 30 seconds and
-breaks through Focus.
+address), several of them, or a bare key. Pushes are critical alerts: they
+ring for 30 seconds even when the phone is muted or in Focus, once the
+recipient allows Critical Alerts for Bark in iOS Settings.
 """
 
 import json
@@ -34,7 +35,7 @@ def targets(values):
 
 def payload(key, title, body, link=""):
     data = {"device_key": key, "title": title, "body": body, "group": "stock",
-            "level": "timeSensitive", "sound": "alarm", "call": "1"}
+            "level": "critical", "volume": "8", "sound": "alarm", "call": "1"}
     if link:
         data["url"] = link
     return data
