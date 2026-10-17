@@ -403,28 +403,65 @@ class NotifyDeliveryTest(unittest.TestCase):
 class PushBarkTest(unittest.TestCase):
     def test_targets_from_app_url_curl_command_or_bare_key(self):
         api = "https://api.day.app"
-        self.assertEqual(push_bark.targets(["https://api.day.app/AbC123/这里改成你自己的推送内容"]), [(api, "AbC123")])
+        self.assertEqual(push_bark.targets(["https://api.day.app/AbC123/这里改成你自己的推送内容"]), [(api, "AbC123", 0)])
         self.assertEqual(push_bark.targets(["curl -X GET https://api.day.app/AbC123/title/body?group=example&ttl=600"]),
-                         [(api, "AbC123")])
-        self.assertEqual(push_bark.targets(["curl 'https://bark.example.com/K9'"]), [("https://bark.example.com", "K9")])
-        self.assertEqual(push_bark.targets([" AbC123 "]), [(api, "AbC123")])
+                         [(api, "AbC123", 0)])
+        self.assertEqual(push_bark.targets(["curl 'https://bark.example.com/K9'"]),
+                         [("https://bark.example.com", "K9", 0)])
+        self.assertEqual(push_bark.targets([" AbC123 "]), [(api, "AbC123", 0)])
         self.assertEqual(push_bark.targets(["", None, "not a key"]), [])
 
     def test_two_recipients_deduplicated(self):
         api = "https://api.day.app"
         self.assertEqual(push_bark.targets(["https://api.day.app/ME/x", "curl -X GET https://api.day.app/HER/t/b"]),
-                         [(api, "ME"), (api, "HER")])
+                         [(api, "ME", 0), (api, "HER", 1)])
         self.assertEqual(push_bark.targets(["https://api.day.app/ME/x\nhttps://api.day.app/HER/x", "ME"]),
-                         [(api, "ME"), (api, "HER")])
+                         [(api, "ME", 0), (api, "HER", 0)])
+
+    def test_quiet_rules_and_hours(self):
+        rules = push_bark.quiet_rules("Europe/Paris 22-7; Asia/Tokyo 23 - 8\n")
+        self.assertEqual(rules[:2], [("Europe/Paris", 22, 7), ("Asia/Tokyo", 23, 8)])
+        self.assertEqual(push_bark.quiet_rules(""), [None])
+        utc = push_bark.timezone.utc
+        at = lambda h, m=0: push_bark.datetime(2026, 1, 15, h, m, tzinfo=utc)  # Paris is UTC+1 in January
+        paris = ("Europe/Paris", 22, 7)
+        self.assertTrue(push_bark.is_quiet(paris, at(21)))       # 22:00 local
+        self.assertTrue(push_bark.is_quiet(paris, at(5, 59)))    # 06:59 local
+        self.assertFalse(push_bark.is_quiet(paris, at(6)))       # 07:00 local
+        self.assertFalse(push_bark.is_quiet(paris, at(20, 59)))  # 21:59 local
+        self.assertTrue(push_bark.is_quiet(("Europe/Paris", 13, 15), at(12)))  # same-day window
+        self.assertFalse(push_bark.is_quiet(None, at(3)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(push_bark.is_quiet(("Mars/Base", 0, 23), at(3)))
+
+    def test_quiet_hours_apply_per_phone(self):
+        env = {"BARK_URL": "https://api.day.app/ME/x", "BARK_URL_2": "https://api.day.app/HER/x",
+               "BARK_QUIET": "Europe/Paris 22-7; Asia/Tokyo 23-8"}
+        now = push_bark.datetime(2026, 1, 15, 22, 30, tzinfo=push_bark.timezone.utc)  # Paris 23:30, Tokyo 07:30
+        with mock.patch.dict(os.environ, env), mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, \
+                contextlib.redirect_stdout(io.StringIO()):
+            push_bark.main("t", "b", now=now)
+        levels = [json.loads(c.args[0].data)["level"] for c in urlopen.call_args_list]
+        self.assertEqual(levels, ["passive", "passive"])
+        now = push_bark.datetime(2026, 1, 15, 0, 30, tzinfo=push_bark.timezone.utc)  # Paris 01:30, Tokyo 09:30
+        with mock.patch.dict(os.environ, env), mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, \
+                contextlib.redirect_stdout(io.StringIO()):
+            push_bark.main("t", "b", now=now)
+        levels = [json.loads(c.args[0].data)["level"] for c in urlopen.call_args_list]
+        self.assertEqual(levels, ["passive", "critical"])
 
     def test_payload_rings_and_links(self):
         data = push_bark.payload("K", "有货", "- Store A：Phone X", "https://shop/x")
         self.assertEqual((data["device_key"], data["call"], data["level"], data["url"]),
                          ("K", "1", "critical", "https://shop/x"))
         self.assertNotIn("url", push_bark.payload("K", "t", "b"))
+        quiet = push_bark.payload("K", "t", "b", quiet=True)
+        self.assertEqual(quiet["level"], "passive")
+        self.assertNotIn("sound", quiet)
+        self.assertNotIn("call", quiet)
 
     def test_unset_is_a_no_op(self):
-        with mock.patch.dict(os.environ, {"BARK_URL": "", "BARK_URL_2": ""}), \
+        with mock.patch.dict(os.environ, {"BARK_URL": "", "BARK_URL_2": "", "BARK_QUIET": ""}), \
                 mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, \
                 contextlib.redirect_stdout(io.StringIO()):
             push_bark.main("t", "b")
@@ -432,7 +469,8 @@ class PushBarkTest(unittest.TestCase):
 
     def test_sends_to_each_and_never_prints_keys(self):
         out = io.StringIO()
-        env = {"BARK_URL": "https://api.day.app/MYKEY/x", "BARK_URL_2": "curl -X GET https://api.day.app/HERKEY/t/b"}
+        env = {"BARK_URL": "https://api.day.app/MYKEY/x", "BARK_URL_2": "curl -X GET https://api.day.app/HERKEY/t/b",
+               "BARK_QUIET": ""}
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, contextlib.redirect_stdout(out):
             push_bark.main("有货", "- Store A：Phone X", "https://shop/x")

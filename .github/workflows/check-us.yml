@@ -50,6 +50,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          BARK_QUIET: ${{ secrets.BARK_QUIET }}
         run: |
           url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
           gh issue close "$url" > /dev/null
@@ -87,6 +88,7 @@ jobs:
           TARGET: ${{ secrets.TARGET }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          BARK_QUIET: ${{ secrets.BARK_QUIET }}
         run: |
           # A push only smoke-tests one round.
           duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
