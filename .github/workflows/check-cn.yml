@@ -29,6 +29,8 @@ permissions:
 
 env:
   WATCH_MINUTES: "20"
+  # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
+  BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   STOCK_ISSUE_TITLE: "有货可自提（国内）"
   GH_REPO: ${{ github.repository }}
 
@@ -46,7 +48,6 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
-          BARK_QUIET: ${{ secrets.BARK_QUIET }}
         run: |
           url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
           gh issue close "$url" > /dev/null
@@ -76,7 +77,6 @@ jobs:
           TARGET: ${{ secrets.TARGET_CN }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
-          BARK_QUIET: ${{ secrets.BARK_QUIET }}
         run: |
           # A push only smoke-tests one round.
           duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
