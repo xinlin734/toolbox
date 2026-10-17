@@ -405,6 +405,9 @@ class PushBarkTest(unittest.TestCase):
                          ("https://api.day.app", "AbC123"))
         self.assertEqual(push_bark.target(" https://bark.example.com/K9 "), ("https://bark.example.com", "K9"))
         self.assertEqual(push_bark.target("AbC123"), ("https://api.day.app", "AbC123"))
+        copied = "curl -X GET https://api.day.app/AbC123/title/body?group=example&ttl=600"
+        self.assertEqual(push_bark.target(copied), ("https://api.day.app", "AbC123"))
+        self.assertEqual(push_bark.target("curl 'https://api.day.app/AbC123'"), ("https://api.day.app", "AbC123"))
 
     def test_payload_rings_and_links(self):
         data = push_bark.payload("K", "有货", "- Store A：Phone X", "https://shop/x")
@@ -430,7 +433,8 @@ class PushBarkTest(unittest.TestCase):
             urlopen.side_effect = push_bark.urllib.error.URLError("https://api.day.app/SECRETKEY down")
             push_bark.main("有货", "b")
         self.assertIn("Bark 推送失败：URLError", out.getvalue())
-        self.assertNotIn("SECRETKEY", out.getvalue())
+        printed = out.getvalue().replace("::add-mask::SECRETKEY", "")
+        self.assertNotIn("SECRETKEY", printed)
 
 
 if __name__ == "__main__":
