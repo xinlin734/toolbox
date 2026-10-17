@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -400,14 +401,21 @@ class NotifyDeliveryTest(unittest.TestCase):
 
 
 class PushBarkTest(unittest.TestCase):
-    def test_target_accepts_app_url_or_bare_key(self):
-        self.assertEqual(push_bark.target("https://api.day.app/AbC123/这里改成你自己的推送内容"),
-                         ("https://api.day.app", "AbC123"))
-        self.assertEqual(push_bark.target(" https://bark.example.com/K9 "), ("https://bark.example.com", "K9"))
-        self.assertEqual(push_bark.target("AbC123"), ("https://api.day.app", "AbC123"))
-        copied = "curl -X GET https://api.day.app/AbC123/title/body?group=example&ttl=600"
-        self.assertEqual(push_bark.target(copied), ("https://api.day.app", "AbC123"))
-        self.assertEqual(push_bark.target("curl 'https://api.day.app/AbC123'"), ("https://api.day.app", "AbC123"))
+    def test_targets_from_app_url_curl_command_or_bare_key(self):
+        api = "https://api.day.app"
+        self.assertEqual(push_bark.targets(["https://api.day.app/AbC123/这里改成你自己的推送内容"]), [(api, "AbC123")])
+        self.assertEqual(push_bark.targets(["curl -X GET https://api.day.app/AbC123/title/body?group=example&ttl=600"]),
+                         [(api, "AbC123")])
+        self.assertEqual(push_bark.targets(["curl 'https://bark.example.com/K9'"]), [("https://bark.example.com", "K9")])
+        self.assertEqual(push_bark.targets([" AbC123 "]), [(api, "AbC123")])
+        self.assertEqual(push_bark.targets(["", None, "not a key"]), [])
+
+    def test_two_recipients_deduplicated(self):
+        api = "https://api.day.app"
+        self.assertEqual(push_bark.targets(["https://api.day.app/ME/x", "curl -X GET https://api.day.app/HER/t/b"]),
+                         [(api, "ME"), (api, "HER")])
+        self.assertEqual(push_bark.targets(["https://api.day.app/ME/x\nhttps://api.day.app/HER/x", "ME"]),
+                         [(api, "ME"), (api, "HER")])
 
     def test_payload_rings_and_links(self):
         data = push_bark.payload("K", "有货", "- Store A：Phone X", "https://shop/x")
@@ -416,25 +424,27 @@ class PushBarkTest(unittest.TestCase):
         self.assertNotIn("url", push_bark.payload("K", "t", "b"))
 
     def test_unset_is_a_no_op(self):
-        with mock.patch.dict(os.environ, {"BARK_URL": ""}), \
+        with mock.patch.dict(os.environ, {"BARK_URL": "", "BARK_URL_2": ""}), \
                 mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, \
                 contextlib.redirect_stdout(io.StringIO()):
             push_bark.main("t", "b")
         urlopen.assert_not_called()
 
-    def test_posts_json_and_never_prints_the_key(self):
+    def test_sends_to_each_and_never_prints_keys(self):
         out = io.StringIO()
-        with mock.patch.dict(os.environ, {"BARK_URL": "https://api.day.app/SECRETKEY/x"}), \
+        env = {"BARK_URL": "https://api.day.app/MYKEY/x", "BARK_URL_2": "curl -X GET https://api.day.app/HERKEY/t/b"}
+        with mock.patch.dict(os.environ, env), \
                 mock.patch.object(push_bark.urllib.request, "urlopen") as urlopen, contextlib.redirect_stdout(out):
             push_bark.main("有货", "- Store A：Phone X", "https://shop/x")
-            req = urlopen.call_args.args[0]
-            self.assertEqual(req.full_url, "https://api.day.app/push")
-            self.assertEqual(json.loads(req.data)["device_key"], "SECRETKEY")
-            urlopen.side_effect = push_bark.urllib.error.URLError("https://api.day.app/SECRETKEY down")
+            self.assertEqual([json.loads(c.args[0].data)["device_key"] for c in urlopen.call_args_list],
+                             ["MYKEY", "HERKEY"])
+            self.assertEqual(urlopen.call_args.args[0].full_url, "https://api.day.app/push")
+            urlopen.side_effect = [mock.MagicMock(), push_bark.urllib.error.URLError("https://api.day.app/HERKEY down")]
             push_bark.main("有货", "b")
-        self.assertIn("Bark 推送失败：URLError", out.getvalue())
-        printed = out.getvalue().replace("::add-mask::SECRETKEY", "")
-        self.assertNotIn("SECRETKEY", printed)
+        printed = re.sub(r"::add-mask::\S+", "", out.getvalue())
+        self.assertIn("Bark 推送失败（第 2 台）：URLError", printed)
+        self.assertNotIn("MYKEY", printed)
+        self.assertNotIn("HERKEY", printed)
 
 
 if __name__ == "__main__":

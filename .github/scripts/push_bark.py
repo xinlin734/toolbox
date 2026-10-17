@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Send a Bark push to the owner's iPhone; does nothing when BARK_URL is unset.
+"""Send a Bark push to every configured iPhone; does nothing when none is set.
 
     push_bark.py TITLE BODY [LINK]
 
-BARK_URL is whatever the Bark app's Copy button gives (a curl command or a
-https://api.day.app/<key>/... address), or just the key. The push rings for 30 seconds and breaks through Focus.
+Recipients come from BARK_URL and BARK_URL_2. Each holds whatever the Bark
+app's Copy button gives (a curl command or a https://api.day.app/<key>/...
+address), several of them, or a bare key. The push rings for 30 seconds and
+breaks through Focus.
 """
 
 import json
@@ -14,12 +16,20 @@ import sys
 import urllib.error
 import urllib.request
 
+ENV_NAMES = ("BARK_URL", "BARK_URL_2")
+ADDRESS_RE = re.compile(r"(https?://[^/\s'\"]+)/([^/?#\s'\"]+)")
 
-def target(value):
-    """(server, key) from what the user pasted."""
-    value = value.strip()
-    m = re.search(r"(https?://[^/\s'\"]+)/([^/?#\s'\"]+)", value)
-    return (m.group(1), m.group(2)) if m else ("https://api.day.app", value)
+
+def targets(values):
+    """Unique (server, key) pairs from what the users pasted."""
+    found = []
+    for value in values:
+        value = (value or "").strip()
+        pairs = ADDRESS_RE.findall(value)
+        if not pairs and value and not re.search(r"\s", value):
+            pairs = [("https://api.day.app", value)]
+        found += [p for p in pairs if p not in found]
+    return found
 
 
 def payload(key, title, body, link=""):
@@ -30,25 +40,32 @@ def payload(key, title, body, link=""):
     return data
 
 
-def main(title, body, link=""):
-    raw = os.environ.get("BARK_URL", "").strip()
-    if not raw:
-        print("没设置 BARK_URL，跳过 Bark")
-        return
-    server, key = target(raw)
-    print(f"::add-mask::{key}")
-    req = urllib.request.Request(f"{server}/push", data=json.dumps(payload(key, title, body, link)).encode(),
+def send(server, key, data):
+    req = urllib.request.Request(f"{server}/push", data=json.dumps(data).encode(),
                                  headers={"Content-Type": "application/json; charset=utf-8"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             resp.read()
-        print("已推送到 Bark")
+        return "ok"
     except urllib.error.HTTPError as e:
-        reason = e.read().decode("utf-8", "replace")[:200].replace(key, "***")
-        print(f"::warning::Bark 推送失败：HTTP {e.code} {reason}")
+        return f"HTTP {e.code} " + e.read().decode("utf-8", "replace")[:200].replace(key, "***")
     except (urllib.error.URLError, TimeoutError) as e:
         # Never echo the URL: it contains the device key.
-        print(f"::warning::Bark 推送失败：{type(e).__name__}")
+        return type(e).__name__
+
+
+def main(title, body, link=""):
+    recipients = targets(os.environ.get(name, "") for name in ENV_NAMES)
+    if not recipients:
+        print("没设置 BARK_URL，跳过 Bark")
+        return
+    for i, (server, key) in enumerate(recipients, 1):
+        print(f"::add-mask::{key}")
+        result = send(server, key, payload(key, title, body, link))
+        if result == "ok":
+            print(f"已推送到 Bark（第 {i} 台）")
+        else:
+            print(f"::warning::Bark 推送失败（第 {i} 台）：{result}")
 
 
 if __name__ == "__main__":
