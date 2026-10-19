@@ -1,0 +1,34 @@
+name: cn-control-test
+
+# One-off control test: same stores as check-cn, but for models that are on
+# sale now, to confirm the checker reports pickup stock when it exists.
+# No issue, no Bark push. Delete this branch after the run.
+on:
+  push:
+    branches: [claude/cn-control-test]
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check models on sale now
+        env:
+          TARGET: ${{ secrets.TARGET_CN }}
+        run: |
+          read -r _ location <<< "$TARGET"
+          echo "::add-mask::$location"
+          for word in $location; do echo "::add-mask::$word"; done
+          for product in iphone-17 iphone-17-pro iphone-air; do
+            echo "== $product"
+            python3 check.py --region cn --product "$product" --location "$location" \
+              --city "${location##* }" --hits-file "hits-$product.txt" > out.log 2>&1
+            echo "exit=$?"
+            grep -E '共找到|可自提 [0-9]+ 个|拦截|失败|没找到|Apple 提示' out.log
+            echo "hits file lines: $(wc -l < "hits-$product.txt" 2>/dev/null || echo 0)"
+            sleep 5
+          done
