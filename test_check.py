@@ -198,6 +198,21 @@ class PickupTest(unittest.TestCase):
         with quiet(), self.assertRaises(check.urllib.error.HTTPError):
             check.check_once(client, {A: {}, B: {}}, "10001")
 
+    def test_several_locations_merge_without_duplicates(self):
+        other = {"body": {"stores": STORES[:1] + [store("Store D", "R4", 1.0, {A: ("available", "Phone X 256GB Blue")})]}}
+        client = FakeClient({check.PICKUP_URL: [RESPONSE, other]})
+        with quiet():
+            rows, _ = check.check_once(client, {A: {}, B: {}}, "上海 上海; 广东 广州 ;")
+        self.assertEqual(len(client.urls), 2)
+        self.assertIn("location=%E4%B8%8A%E6%B5%B7", client.urls[0])
+        keys = [(r.store_number, r.part) for r in rows]
+        self.assertEqual(len(keys), len(set(keys)))  # Store A came back twice, counted once
+        self.assertIn(("R4", A), keys)
+
+    def test_split_locations(self):
+        self.assertEqual(check.split_locations("10001"), ["10001"])
+        self.assertEqual(check.split_locations("上海 上海; 广东 广州;"), ["上海 上海", "广东 广州"])
+
     def test_city_filter(self):
         client = FakeClient({check.PICKUP_URL: RESPONSE})
         with quiet():
