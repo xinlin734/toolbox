@@ -295,12 +295,42 @@ def query_pickup(client, parts, zip_code):
     raise error
 
 
-def check_once(client, parts, zip_code, batch_size=8, city=None):
+LOCATION_GAP_SECONDS = 6  # between locations in one round, so Apple sees a steady trickle
+
+
+def split_locations(location):
+    """"上海 上海; 广东 广州" -> ["上海 上海", "广东 广州"]; a single location stays one."""
+    return [loc.strip() for loc in location.split(";") if loc.strip()]
+
+
+def check_once(client, parts, location, batch_size=8, city=None):
     """Raises Blocked if Apple refuses the queries; that is not the same as no stock.
 
+    location may list several places separated by ";": each nearby search
+    reaches only the closest stores, so a whole country takes a handful.
     city keeps only stores in that city: a nearby search can reach the next one.
     """
     client.warm_up()
+    rows, notices, seen = [], set(), set()
+    for n, loc in enumerate(split_locations(location)):
+        if n:
+            time.sleep(LOCATION_GAP_SECONDS + random.random() * 3)
+        loc_rows, loc_notices = _check_location(client, parts, loc, batch_size)
+        for r in loc_rows:
+            if (r.store_number, r.part) not in seen:
+                seen.add((r.store_number, r.part))
+                rows.append(r)
+        notices |= loc_notices
+    if city:
+        nearby = {r.store_number for r in rows}
+        rows = [r for r in rows if r.city.strip() == city]
+        if nearby and not rows:
+            print(f"⚠️  附近 {len(nearby)} 家店都不在{city}", file=sys.stderr)
+    rows.sort(key=lambda r: (r.distance if r.distance is not None else 1e9, r.store, r.part))
+    return rows, notices
+
+
+def _check_location(client, parts, zip_code, batch_size):
     part_list = sorted(parts)
     rows, notices, failed = [], set(), []
     for i in range(0, len(part_list), batch_size):
@@ -328,12 +358,6 @@ def check_once(client, parts, zip_code, batch_size=8, city=None):
 
     if failed and not rows:
         raise failed[-1]
-    if city:
-        nearby = {r.store_number for r in rows}
-        rows = [r for r in rows if r.city.strip() == city]
-        if nearby and not rows:
-            print(f"⚠️  附近 {len(nearby)} 家店都不在{city}", file=sys.stderr)
-    rows.sort(key=lambda r: (r.distance if r.distance is not None else 1e9, r.store, r.part))
     return rows, notices
 
 
@@ -366,7 +390,8 @@ def write_hits(path, hits, parts):
     """Only store and model: this text ends up in a public issue."""
     with open(path, "w", encoding="utf-8") as f:
         for r in hits:
-            f.write(f"- {r.store}：{label(r.part, parts)}\n")
+            where = r.store if not r.city or r.city in r.store else f"{r.city} {r.store}"
+            f.write(f"- {where}：{label(r.part, parts)}\n")
 
 
 # ---------- delivery ----------
@@ -445,7 +470,8 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="查 Apple Store 附近门店的自提库存和寄送日期（一个产品的全部型号）")
     p.add_argument("--region", choices=sorted(REGIONS), default="us", help="us（默认）或 cn（中国大陆）")
     p.add_argument("--product", required=True, help="购买页地址 /shop/buy-iphone/ 后面那段")
-    p.add_argument("--location", required=True, help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”")
+    p.add_argument("--location", required=True,
+                   help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”。多个地点用分号隔开，结果合并去重")
     p.add_argument("--city", help="只看这个城市的门店（附近搜索可能会带出别的城市）")
     p.add_argument("--parts", help="手动指定型号，逗号分隔（跳过自动抓取）")
     p.add_argument("--all", action="store_true", help="显示每家店每个型号的状态（包括没货的）")
@@ -511,6 +537,7 @@ def main(argv=None):
     try:
         while True:
             pause = interval
+            round_started = time.monotonic()
             try:
                 rows, notices = check_once(client, parts, args.location, args.batch_size, args.city)
                 learn_titles(parts, rows, args.product)
@@ -541,6 +568,9 @@ def main(argv=None):
                       f"{pause // 60} 分钟后再试", file=sys.stderr)
             except (urllib.error.URLError, TimeoutError) as e:
                 print(f"[{datetime.now():%H:%M:%S}] 查询失败：{e}（下次继续）", file=sys.stderr)
+            # The interval runs from the start of a round: a round over several
+            # locations takes a while itself.
+            pause = max(pause - (time.monotonic() - round_started), 5)
             if args.duration is not None and time.monotonic() - started + pause > args.duration:
                 return 0
             time.sleep(pause + random.uniform(0, 3))

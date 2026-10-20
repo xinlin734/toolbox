@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run check.py for one target and put only counts in the public log.
 #   run_check.sh REGION "<product> <location>" [check.py flags...]
+# Optional env LOCATIONS: see below.
 # Writes code=<exit code> to $GITHUB_OUTPUT: 0 ok, 2 blocked or failed, 4 not configured.
 set -uo pipefail
 region=$1 target=$2
@@ -21,9 +22,15 @@ case "$region" in
   *) export BUY_URL="https://www.apple.com/shop/buy-iphone/$product" ;;
 esac
 
-args=(--region "$region" --product "$product" --location "$location")
-# Mainland China: "省 市" — keep only stores in that city.
-[ "$region" = cn ] && args+=(--city "${location##* }")
+# LOCATIONS, if set, replaces the secret's location with a public list of
+# places ("省 市; 省 市") and counts every store they reach.
+if [ -n "${LOCATIONS:-}" ]; then
+  args=(--region "$region" --product "$product" --location "$LOCATIONS")
+else
+  args=(--region "$region" --product "$product" --location "$location")
+  # Mainland China: "省 市" — keep only stores in that city.
+  [ "$region" = cn ] && args+=(--city "${location##* }")
+fi
 python3 check.py "${args[@]}" "$@" > run.log 2>&1
 code=$?
 echo "code=$code" >> "$GITHUB_OUTPUT"

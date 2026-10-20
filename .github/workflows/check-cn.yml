@@ -1,8 +1,12 @@
 name: check-cn
 
-# Same setup as check-us.yml for the mainland China store, pickup only and
-# always once a minute. TARGET_CN holds "<product> <省> <市>"; only stores in
-# that city count.
+# Same setup as check-us.yml for mainland China, pickup only and always once a
+# minute, at every Apple Store in the country. The product comes from
+# TARGET_CN ("<product> <省> <市>"); the stores come from the public location
+# list below. Each nearby search reaches only the closest stores, so 13
+# searches cover all 49 stores (mapped 2026-10-20). They run as three groups on
+# three runners, at most 5 searches a minute each: one runner asking for all
+# 13 every minute gets HTTP 541 from Apple within a few minutes.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -31,15 +35,18 @@ env:
   WATCH_MINUTES: "20"
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
-  STOCK_ISSUE_TITLE: "有货可自提（国内）"
   GH_REPO: ${{ github.repository }}
 
 jobs:
-  check:
+  # Chained runs always proceed. Anything else steps aside while another run
+  # is active, so only one set of watchers queries Apple at a time.
+  gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      busy: ${{ steps.gate.outputs.busy }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
 
       - name: Test alert
         if: github.event_name == 'workflow_dispatch' && inputs.test_alert
@@ -53,8 +60,6 @@ jobs:
           gh issue close "$url" > /dev/null
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
 
-      # Chained runs always proceed. Anything else steps aside while another
-      # run is active, so only one watcher queries Apple at a time.
       - name: Skip if another run is active
         id: gate
         env:
@@ -68,13 +73,36 @@ jobs:
             --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and .event != \"push\" and .status != \"completed\")] | length")
           echo "busy=$([ "$others" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+  check:
+    needs: gate
+    if: needs.gate.outputs.busy != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: 北方
+            # 北京 6, 天津 3, 济南, 沈阳 2, 青岛, 大连, 郑州, 武汉
+            locations: "天津 天津; 辽宁 沈阳; 山东 烟台; 河南 郑州; 湖北 武汉"
+          - group: 华东
+            # 上海 8, 杭州 2, 苏州, 宁波, 南京 3, 合肥, 无锡, 厦门, 福州, 温州
+            locations: "浙江 宁波; 江苏 南京; 福建 厦门; 浙江 温州"
+          - group: 南方
+            # 广州 2, 深圳 3, 重庆 3, 成都 2, 长沙, 昆明, 南宁
+            locations: "广东 广州; 重庆 重庆; 湖南 长沙; 云南 昆明; 广西壮族自治区 南宁"
+    env:
+      STOCK_ISSUE_TITLE: "有货可自提（国内·${{ matrix.group }}）"
+    steps:
+      - uses: actions/checkout@v5
+
       - name: Check
         id: watch
-        if: steps.gate.outputs.busy != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           TARGET: ${{ secrets.TARGET_CN }}
+          LOCATIONS: ${{ matrix.locations }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
         run: |
@@ -84,17 +112,23 @@ jobs:
             --watch 60 --duration "$duration" --stop-on-block \
             --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt"
 
-      # Hand over to a fresh run on a fresh runner. After a block, wait a
-      # little first instead of asking Apple again right away.
+      # A blocked group stops early; let its runner sit a little before the
+      # next run asks Apple again from fresh runners.
+      - name: Cool down after a block
+        if: steps.watch.outputs.code == '2' && github.event_name != 'push'
+        run: sleep 120
+
+  # Hand over to a fresh run on fresh runners once every group is done.
+  next:
+    needs: [gate, check]
+    if: >-
+      !cancelled() && github.event_name != 'push' && needs.gate.outputs.busy != 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Start the next run
-        if: >-
-          !cancelled() && github.event_name != 'push' && steps.gate.outputs.busy != 'true'
-          && (steps.watch.outputs.code == '0' || steps.watch.outputs.code == '2')
         env:
           GH_TOKEN: ${{ github.token }}
-          CODE: ${{ steps.watch.outputs.code }}
         run: |
-          [ "$CODE" = "2" ] && sleep 120
           for i in 1 2 3; do
             gh workflow run check-cn.yml --ref "$GITHUB_REF_NAME" -f chained=true && break
             sleep 15
