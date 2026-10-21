@@ -7,6 +7,11 @@ name: check-cn
 # searches cover all 49 stores (mapped 2026-10-20). They run as three groups on
 # three runners, at most 5 searches a minute each: one runner asking for all
 # 13 every minute gets HTTP 541 from Apple within a few minutes.
+#
+# Even at 5 a minute a runner is refused after about 6 minutes, so each run
+# watches for only 4 and the next run starts on fresh runners just before it
+# ends. While a place shows stock, that place alone is asked every 30 seconds.
+# A refusal is logged on the "检查被拦记录" issue so it never goes unnoticed.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -32,7 +37,8 @@ permissions:
   issues: write
 
 env:
-  WATCH_MINUTES: "20"
+  WATCH_MINUTES: "4"
+  BLOCK_ISSUE_TITLE: "检查被拦记录"
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
@@ -109,26 +115,38 @@ jobs:
           # A push only smoke-tests one round.
           duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
           bash .github/scripts/run_check.sh cn "$TARGET" \
-            --watch 60 --duration "$duration" --stop-on-block \
+            --watch 60 --hot-interval 30 --duration "$duration" --stop-on-block \
             --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt"
 
-      # A blocked group stops early; let its runner sit a little before the
-      # next run asks Apple again from fresh runners.
-      - name: Cool down after a block
-        if: steps.watch.outputs.code == '2' && github.event_name != 'push'
-        run: sleep 120
+      - name: Log a block
+        if: steps.watch.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          GROUP: ${{ matrix.group }}
+        run: |
+          note="@$OWNER 国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，这组暂停到下一轮换机器（最多约 4 分钟）。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
+          num=$(gh issue list --state open --limit 100 --json number,title \
+                --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
+          if [ -z "$num" ]; then
+            gh issue create --title "$BLOCK_ISSUE_TITLE" --body "$note" > /dev/null
+          else
+            gh issue comment "$num" --body "$note" > /dev/null
+          fi
 
-  # Hand over to a fresh run on fresh runners once every group is done.
+  # Start the next run on fresh runners shortly before this one's watchers
+  # stop, so the hand-over leaves no gap.
   next:
-    needs: [gate, check]
+    needs: gate
     if: >-
-      !cancelled() && github.event_name != 'push' && needs.gate.outputs.busy != 'true'
+      github.event_name != 'push' && needs.gate.outputs.busy != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Start the next run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          sleep $((WATCH_MINUTES * 60 - 45))
           for i in 1 2 3; do
             gh workflow run check-cn.yml --ref "$GITHUB_REF_NAME" -f chained=true && break
             sleep 15

@@ -310,12 +310,24 @@ def check_once(client, parts, location, batch_size=8, city=None):
     reaches only the closest stores, so a whole country takes a handful.
     city keeps only stores in that city: a nearby search can reach the next one.
     """
+    return merge_rows(check_locations(client, parts, split_locations(location), batch_size), city)
+
+
+def check_locations(client, parts, locations, batch_size=8):
+    """Query each location in turn; returns {location: (rows, notices)}."""
     client.warm_up()
-    rows, notices, seen = [], set(), set()
-    for n, loc in enumerate(split_locations(location)):
+    results = {}
+    for n, loc in enumerate(locations):
         if n:
             time.sleep(LOCATION_GAP_SECONDS + random.random() * 3)
-        loc_rows, loc_notices = _check_location(client, parts, loc, batch_size)
+        results[loc] = _check_location(client, parts, loc, batch_size)
+    return results
+
+
+def merge_rows(results, city=None):
+    """Combine per-location results, counting a store reached from two places once."""
+    rows, notices, seen = [], set(), set()
+    for loc_rows, loc_notices in results.values():
         for r in loc_rows:
             if (r.store_number, r.part) not in seen:
                 seen.add((r.store_number, r.part))
@@ -483,6 +495,8 @@ def parse_args(argv=None):
                    help="--watch 模式下被 Apple 拦截就退出（返回 2），而不是原地等")
     p.add_argument("--closed-interval", type=int, metavar="SECONDS",
                    help="--watch 模式下如果 Apple 还没开放自提（所有门店都显示“稍后再来”），改成每隔这么多秒查一次")
+    p.add_argument("--hot-interval", type=int, metavar="SECONDS",
+                   help="--watch 模式下某个地点查到有货后，改成每隔这么多秒只查那个地点（每个间隔仍做一次完整轮），直到没货")
     p.add_argument("--hits-file", metavar="PATH", help="每次查完把有货的门店和型号写进这个文件")
     p.add_argument("--on-change", metavar="CMD", help="--watch 模式下，第一次查完以及有货情况变化时执行这条命令")
     p.add_argument("--delivery", action="store_true", help="同时查寄送最早日期，只支持美国（--watch 模式下每 5 分钟查一次）")
@@ -534,12 +548,21 @@ def main(argv=None):
     seen = None  # None until the first successful round, so --on-change always fires once
     cooldown = 0
     last_delivery, delivery_checked_at = None, None
+    locations = split_locations(args.location)
+    latest = {}  # location -> (rows, notices) from its most recent query
+    hot, full_round_at = [], None
     try:
         while True:
             pause = interval
             round_started = time.monotonic()
             try:
-                rows, notices = check_once(client, parts, args.location, args.batch_size, args.city)
+                # While a place shows stock, ask only there in between full rounds.
+                if hot and full_round_at is not None and round_started - full_round_at < interval:
+                    batch = hot
+                else:
+                    batch, full_round_at = locations, round_started
+                latest.update(check_locations(client, parts, batch, args.batch_size))
+                rows, notices = merge_rows(latest, args.city)
                 learn_titles(parts, rows, args.product)
                 hits = print_report(rows, notices, parts, args.all)
                 sys.stdout.flush()
@@ -550,6 +573,11 @@ def main(argv=None):
                     subprocess.run(args.on_change, shell=True, check=False)
                 seen = current
                 cooldown = 0
+                if args.hot_interval:
+                    hot = [loc for loc in locations
+                           if any(r.available and r.part in parts for r in latest.get(loc, ([], set()))[0])]
+                    if hot:
+                        pause = min(pause, max(args.hot_interval, 15))
                 if args.delivery and (delivery_checked_at is None
                                       or time.monotonic() - delivery_checked_at >= DELIVERY_EVERY_SECONDS):
                     delivery_checked_at = time.monotonic()
