@@ -315,6 +315,25 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(run.call_count, 3)  # rounds 1, 3 and 5
 
+    def test_hot_location_is_checked_every_30_seconds(self):
+        empty = {"body": {"stores": [store("Store Z", "R9", 1.0, {A: ("unavailable", "Phone X 256GB Blue")})]}}
+        client = FakeClient({})
+        client.get_json = lambda url: (client.urls.append(url),
+                                       RESPONSE if "location=hot" in url else empty)[1]
+        clock = [0.0]
+        with mock.patch.object(check, "AppleClient", lambda *a, **k: client), \
+                mock.patch.object(check.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)), \
+                mock.patch.object(check.time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(check.random, "random", lambda: 0), \
+                mock.patch.object(check.random, "uniform", lambda a, b: 0), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            check.main(["--product", PRODUCT, "--location", "hot; cold", "--parts", f"{A},{B}",
+                        "--watch", "60", "--duration", "240", "--hot-interval", "30"])
+        hot = sum("location=hot" in u for u in client.urls)
+        cold = sum("location=cold" in u for u in client.urls)
+        self.assertEqual(cold, 5)  # still once a minute: at 0, 60, ..., 240 s
+        self.assertEqual(hot, 9)  # every 30 seconds
+
     def test_stop_on_block(self):
         blocked = check.Blocked("HTTP 541")
         code, run, _, _ = self.run_main({check.PICKUP_URL: blocked, check.FULFILLMENT_URL: blocked},
