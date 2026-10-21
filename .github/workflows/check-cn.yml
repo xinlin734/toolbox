@@ -11,7 +11,9 @@ name: check-cn
 # Even at 5 a minute a runner is refused after about 6 minutes, so each run
 # watches for only 4 and the next run starts on fresh runners just before it
 # ends. While a place shows stock, that place alone is asked every 30 seconds.
-# A refusal is logged on the "检查被拦记录" issue so it never goes unnoticed.
+# A refusal is logged on the "检查被拦记录" issue so it never goes unnoticed,
+# and the refused group restarts at once on a fresh runner ("rescue" run) for
+# the rest of the 4 minutes, so a block costs well under a minute.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -25,6 +27,14 @@ on:
         description: "内部用：由上一轮自动启动"
         type: boolean
         default: false
+      rescue_group:
+        description: "内部用：被拦后换机器接替的组"
+        type: string
+        default: ""
+      until:
+        description: "内部用：接替查到这个时间（epoch 秒）"
+        type: string
+        default: ""
   push:
     paths:
       - check.py
@@ -70,7 +80,7 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          CHAINED: ${{ github.event_name == 'workflow_dispatch' && inputs.chained }}
+          CHAINED: ${{ github.event_name == 'workflow_dispatch' && (inputs.chained || inputs.rescue_group != '') }}
         run: |
           if [ "$CHAINED" = "true" ] || [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "busy=false" >> "$GITHUB_OUTPUT"; exit 0
@@ -99,11 +109,15 @@ jobs:
             locations: "广东 广州; 重庆 重庆; 湖南 长沙; 云南 昆明; 广西壮族自治区 南宁"
     env:
       STOCK_ISSUE_TITLE: "有货可自提（国内·${{ matrix.group }}）"
+      # A rescue run only replaces the one group that was refused.
+      SKIP: ${{ inputs.rescue_group != '' && inputs.rescue_group != matrix.group }}
     steps:
       - uses: actions/checkout@v5
+        if: env.SKIP != 'true'
 
       - name: Check
         id: watch
+        if: env.SKIP != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
@@ -111,9 +125,15 @@ jobs:
           LOCATIONS: ${{ matrix.locations }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          UNTIL: ${{ inputs.until }}
         run: |
-          # A push only smoke-tests one round.
-          duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
+          # A push only smoke-tests one round; a rescue run watches until the
+          # run it replaces would have ended.
+          now=$(date +%s)
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then duration=0
+          elif [ -n "$UNTIL" ]; then duration=$(( UNTIL - now > 0 ? UNTIL - now : 0 ))
+          else duration=$((WATCH_MINUTES * 60)); fi
+          echo "until=$(( now + duration ))" >> "$GITHUB_OUTPUT"
           bash .github/scripts/run_check.sh cn "$TARGET" \
             --watch 60 --hot-interval 30 --duration "$duration" --stop-on-block \
             --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt"
@@ -124,8 +144,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           GROUP: ${{ matrix.group }}
+          UNTIL: ${{ steps.watch.outputs.until }}
         run: |
-          note="@$OWNER 国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，这组暂停到下一轮换机器（最多约 4 分钟）。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
+          # Hand the rest of this run to a fresh runner, unless the next
+          # regular run is about to take over anyway.
+          if [ $(( UNTIL - $(date +%s) )) -gt 60 ]; then
+            action="换机器失败，等下一轮接上"
+            for i in 1 2 3; do
+              if gh workflow run check-cn.yml --ref "$GITHUB_REF_NAME" \
+                   -f rescue_group="$GROUP" -f until="$UNTIL"; then
+                action="已立即换新机器接着查"; break
+              fi
+              sleep 5
+            done
+          else
+            action="下一轮马上换新机器接上"
+          fi
+          note="@$OWNER 国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
           num=$(gh issue list --state open --limit 100 --json number,title \
                 --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
           if [ -z "$num" ]; then
@@ -140,6 +175,7 @@ jobs:
     needs: gate
     if: >-
       github.event_name != 'push' && needs.gate.outputs.busy != 'true'
+      && inputs.rescue_group == ''
     runs-on: ubuntu-latest
     steps:
       - name: Start the next run
