@@ -223,6 +223,15 @@ def learn_titles(parts, rows, product):
         del parts[part]
 
 
+def keep_model(parts, text):
+    """Drop parts whose title lacks text, e.g. "Pro Max"; parts with no title yet stay."""
+    # Apple's titles often put a no-break space inside names such as "Pro Max".
+    text = " ".join(text.lower().split())
+    for part in [p for p, meta in parts.items()
+                 if meta.get("title") and text not in " ".join(meta["title"].lower().split())]:
+        del parts[part]
+
+
 def label(part, parts):
     return (parts.get(part) or {}).get("title") or part
 
@@ -406,6 +415,18 @@ def write_hits(path, hits, parts):
             f.write(f"- {where}：{label(r.part, parts)}\n")
 
 
+def order_link(region, part):
+    """Apple's page for one model: opens the buy page with that model already chosen."""
+    return f"{region.shop}/product/{part}"
+
+
+def write_link(path, hits, region):
+    """The order link for the nearest store's first model in stock; empty when none."""
+    with open(path, "w", encoding="utf-8") as f:
+        if hits:
+            f.write(order_link(region, hits[0].part) + "\n")
+
+
 # ---------- delivery ----------
 
 def delivery_url(parts, zip_code, region=US):
@@ -485,6 +506,7 @@ def parse_args(argv=None):
     p.add_argument("--location", required=True,
                    help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”。多个地点用分号隔开，结果合并去重")
     p.add_argument("--city", help="只看这个城市的门店（附近搜索可能会带出别的城市）")
+    p.add_argument("--model", help="只看名称里带这段文字的型号，例如 \"Pro Max\"")
     p.add_argument("--parts", help="手动指定型号，逗号分隔（跳过自动抓取）")
     p.add_argument("--all", action="store_true", help="显示每家店每个型号的状态（包括没货的）")
     p.add_argument("--list-parts", action="store_true", help="只列出找到的型号，不查库存")
@@ -498,6 +520,7 @@ def parse_args(argv=None):
     p.add_argument("--hot-interval", type=int, metavar="SECONDS",
                    help="--watch 模式下某个地点查到有货后，改成每隔这么多秒只查那个地点（每个间隔仍做一次完整轮），直到没货")
     p.add_argument("--hits-file", metavar="PATH", help="每次查完把有货的门店和型号写进这个文件")
+    p.add_argument("--link-file", metavar="PATH", help="每次查完把最近一家有货门店那款的下单链接写进这个文件")
     p.add_argument("--on-change", metavar="CMD", help="--watch 模式下，第一次查完以及有货情况变化时执行这条命令")
     p.add_argument("--delivery", action="store_true", help="同时查寄送最早日期，只支持美国（--watch 模式下每 5 分钟查一次）")
     p.add_argument("--delivery-file", metavar="PATH", help="把寄送日期写进这个 JSON 文件")
@@ -534,9 +557,13 @@ def main(argv=None):
             print(f"查询失败：{e}", file=sys.stderr)
             return 2
         learn_titles(parts, rows, args.product)
+        if args.model:
+            keep_model(parts, args.model)
         hits = print_report(rows, notices, parts, args.all)
         if args.hits_file:
             write_hits(args.hits_file, hits, parts)
+        if args.link_file:
+            write_link(args.link_file, hits, client.region)
         if args.delivery:
             watch_delivery(client, parts, args, None)
         return 0 if hits else 1
@@ -564,11 +591,15 @@ def main(argv=None):
                 latest.update(check_locations(client, parts, batch, args.batch_size))
                 rows, notices = merge_rows(latest, args.city)
                 learn_titles(parts, rows, args.product)
+                if args.model:
+                    keep_model(parts, args.model)
                 hits = print_report(rows, notices, parts, args.all)
                 sys.stdout.flush()
                 current = {(r.store_number, r.part) for r in hits}
                 if args.hits_file:
                     write_hits(args.hits_file, hits, parts)
+                if args.link_file:
+                    write_link(args.link_file, hits, client.region)
                 if args.on_change and current != seen:
                     subprocess.run(args.on_change, shell=True, check=False)
                 seen = current
