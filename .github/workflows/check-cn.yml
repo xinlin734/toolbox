@@ -52,6 +52,8 @@ env:
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
+  # Stock starts the 10-second checks for this region (surge.yml).
+  SURGE_REGION: cn
 
 jobs:
   # Chained runs always proceed. Anything else steps aside while another run
@@ -62,7 +64,6 @@ jobs:
       busy: ${{ steps.gate.outputs.busy }}
     steps:
       - uses: actions/checkout@v5
-        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
 
       - name: Test alert
         if: github.event_name == 'workflow_dispatch' && inputs.test_alert
@@ -75,6 +76,15 @@ jobs:
           url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
           gh issue close "$url" > /dev/null
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
+
+      # Stock in the last 30 minutes: make sure the 10-second checks
+      # (surge.yml) are running, restarting them if they broke.
+      - name: Keep the 10-second checks going
+        if: github.event_name != 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/surge.sh "$SURGE_REGION"
 
       - name: Skip if another run is active
         id: gate

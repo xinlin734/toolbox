@@ -6,6 +6,7 @@
 # Each new sighting also goes to Bark when BARK_URL is set. The order link is
 # the model page written by check.py --link-file (tapping the push opens that
 # model ready to add to bag), else BUY_URL, the product's buy page.
+# Stock also starts the 10-second checks for SURGE_REGION, if set.
 # Needs GH_TOKEN, OWNER and STOCK_ISSUE_TITLE in the environment.
 set -euo pipefail
 hits=${1:-hits.txt}
@@ -30,6 +31,10 @@ if [ -s "$hits" ]; then
   fi
   python3 "$(dirname "$0")/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
 点开直接进这款的购买页" "$order"
+  # Then ask every 10 seconds for the next half hour (SURGE_REGION: cn or us).
+  if [ -n "${SURGE_REGION:-}" ]; then
+    bash "$(dirname "$0")/surge.sh" "$SURGE_REGION" start || true
+  fi
 elif [ -n "$num" ]; then
   gh issue close "$num" --comment "没货了。" > /dev/null
 fi

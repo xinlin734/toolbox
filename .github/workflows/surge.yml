@@ -1,0 +1,208 @@
+name: surge
+run-name: surge ${{ inputs.region }} ${{ inputs.chain }} ${{ inputs.lane }}
+
+# Once a store shows stock, the region is asked every 10 seconds until 30
+# minutes after the last stock is gone: mainland China at all 49 stores, the
+# US at every store near the ZIP. check-cn / check-us start this through
+# surge.sh when they first see stock, and restart it if it breaks.
+#
+# One runner asking every 10 seconds would be refused by Apple within a few
+# minutes, so each place is shared by three runners ("lanes") on a common
+# clock: each asks every place every 30 seconds, offset by 10 seconds from
+# the others. A mainland group of 5 places is then 10 queries a minute per
+# runner, so every run lasts only CN_SECONDS before fresh runners take over
+# (each runner stays near 20 queries, under the ~30 after which Apple starts
+# refusing). A refused lane restarts at once on a fresh runner, logged on
+# "检查被拦记录" like the regular checks.
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "cn 或 us"
+        type: choice
+        options: [cn, us]
+        default: cn
+      chain:
+        description: "内部用：这条接力的编号"
+        type: string
+        default: ""
+      start_at:
+        description: "内部用：从这个时间开始查（epoch 秒）"
+        type: string
+        default: ""
+      lane:
+        description: "内部用：被拦后只接替这一条"
+        type: string
+        default: ""
+      until:
+        description: "内部用：接替查到这个时间（epoch 秒）"
+        type: string
+        default: ""
+      keep_until:
+        description: "没货也一直查到这个时间（epoch 秒），例如预计补货的时段"
+        type: string
+        default: ""
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+env:
+  PACE: "30"
+  CN_SECONDS: "120"
+  US_SECONDS: "240"
+  # Lead time for the next run's runners to come up before the hand-over.
+  LEAD_SECONDS: "90"
+  BLOCK_ISSUE_TITLE: "检查被拦记录"
+  BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
+  GH_REPO: ${{ github.repository }}
+  REGION: ${{ inputs.region }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.plan.outputs.lanes }}
+      start_at: ${{ steps.plan.outputs.start_at }}
+      until: ${{ steps.plan.outputs.until }}
+      chain: ${{ steps.plan.outputs.chain }}
+    steps:
+      - name: Plan the lanes
+        id: plan
+        env:
+          CHAIN: ${{ inputs.chain }}
+          START_AT: ${{ inputs.start_at }}
+          LANE: ${{ inputs.lane }}
+          UNTIL: ${{ inputs.until }}
+        run: |
+          now=$(date +%s)
+          if [ "$REGION" = cn ]; then
+            seconds=$CN_SECONDS
+            # The same groups as check-cn.yml.
+            groups='[
+              {"group": "北方", "locations": "天津 天津; 辽宁 沈阳; 山东 烟台; 河南 郑州; 湖北 武汉"},
+              {"group": "华东", "locations": "浙江 宁波; 江苏 南京; 福建 厦门; 浙江 温州"},
+              {"group": "南方", "locations": "广东 广州; 重庆 重庆; 湖南 长沙; 云南 昆明; 广西壮族自治区 南宁"}]'
+          else
+            seconds=$US_SECONDS
+            groups='[{"group": "美国", "locations": ""}]'
+          fi
+          lanes=$(jq -c --argjson pace "$PACE" '[.[] as $g | range(0; $pace; 10) as $p
+                  | $g + {phase: $p, lane: "\($g.group):\($p)"}]' <<< "$groups")
+          if [ -n "$LANE" ]; then
+            lanes=$(jq -c --arg lane "$LANE" 'map(select(.lane == $lane))' <<< "$lanes")
+            start_at=$now until=$UNTIL
+          else
+            # A first run gives its runners time to come up.
+            start_at=${START_AT:-$(( now + 45 ))}
+            until=$(( start_at + seconds ))
+          fi
+          {
+            echo "lanes=$lanes"
+            echo "start_at=$start_at"
+            echo "until=$until"
+            echo "chain=${CHAIN:-$GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
+          echo "$(jq length <<< "$lanes") 条，$(date -d @"$start_at" -u +%T)–$(date -d @"$until" -u +%T) UTC"
+
+  check:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.lanes) }}
+    env:
+      STOCK_ISSUE_TITLE: ${{ inputs.region == 'cn' && format('有货可自提（国内·{0}）', matrix.group) || '有货可自提' }}
+      SURGE_REGION: ${{ inputs.region }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check
+        id: watch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          TARGET: ${{ inputs.region == 'cn' && secrets.TARGET_CN || secrets.TARGET }}
+          LOCATIONS: ${{ matrix.locations }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          PHASE: ${{ matrix.phase }}
+          START_AT: ${{ needs.plan.outputs.start_at }}
+          UNTIL: ${{ needs.plan.outputs.until }}
+        run: |
+          bash .github/scripts/run_check.sh "$REGION" "$TARGET" \
+            --pace "$PACE" --phase "$PHASE" --start-at "$START_AT" --end-at "$UNTIL" --stop-on-block \
+            --hits-file hits.txt --link-file link.txt \
+            --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt"
+
+      - name: Log a block
+        if: steps.watch.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          LANE: ${{ matrix.lane }}
+          CHAIN: ${{ needs.plan.outputs.chain }}
+          UNTIL: ${{ needs.plan.outputs.until }}
+        run: |
+          # The other two lanes keep asking meanwhile, every 20 seconds.
+          if [ $(( UNTIL - $(date +%s) )) -gt 45 ]; then
+            action="换机器失败，等下一轮接上"
+            for i in 1 2 3; do
+              if gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" \
+                   -f chain="$CHAIN" -f lane="$LANE" -f until="$UNTIL"; then
+                action="已立即换新机器接着查"; break
+              fi
+              sleep 5
+            done
+          else
+            action="下一轮马上换新机器接上"
+          fi
+          where=$([ "$REGION" = cn ] && echo "国内·${LANE%%:*}" || echo "美国")
+          note="@$OWNER $where（有货后 10 秒加密检查）在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
+          num=$(gh issue list --state open --limit 100 --json number,title \
+                --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
+          if [ -z "$num" ]; then
+            gh issue create --title "$BLOCK_ISSUE_TITLE" --body "$note" > /dev/null
+          else
+            gh issue comment "$num" --body "$note" > /dev/null
+          fi
+
+  # Shortly before this run's lanes stop, start fresh runners to take over,
+  # as long as the region had stock within the last 30 minutes.
+  next:
+    needs: plan
+    if: inputs.lane == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Start the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHAIN: ${{ needs.plan.outputs.chain }}
+          UNTIL: ${{ needs.plan.outputs.until }}
+          KEEP_UNTIL: ${{ inputs.keep_until }}
+        run: |
+          wait=$(( UNTIL - LEAD_SECONDS - $(date +%s) ))
+          [ "$wait" -gt 0 ] && sleep "$wait"
+          if [ "${KEEP_UNTIL:-0}" -gt "$UNTIL" ]; then
+            echo "按要求没货也查到 $(date -d @"$KEEP_UNTIL" -u +%T) UTC"
+          elif ! bash .github/scripts/surge.sh "$REGION" want; then
+            echo "30 分钟内没再看到货，加密检查到此结束"; exit 0
+          fi
+          # If two chains were started at once, the older one carries on.
+          oldest=$(gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=30" \
+            --jq "[.workflow_runs[] | select(.status != \"completed\")
+                   | select(.display_title | startswith(\"surge $REGION\"))
+                   | ((.display_title | split(\" \"))[2] | select(. != \"\") | tonumber) // .id] | min")
+          if [ -n "$oldest" ] && [ "$oldest" != null ] && [ "$oldest" -lt "$CHAIN" ]; then
+            echo "另一条更早的接力在跑，这条停下"; exit 0
+          fi
+          for i in 1 2 3; do
+            gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" \
+              -f chain="$CHAIN" -f start_at="$UNTIL" ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && break
+            sleep 10
+          done

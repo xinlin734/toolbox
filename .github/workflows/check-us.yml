@@ -61,6 +61,8 @@ env:
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   STOCK_ISSUE_TITLE: "有货可自提"
   GH_REPO: ${{ github.repository }}
+  # Stock starts the 10-second checks for this region (surge.yml).
+  SURGE_REGION: us
 
 jobs:
   # Chained and rescue runs always proceed. Anything else steps aside while
@@ -71,7 +73,6 @@ jobs:
       busy: ${{ steps.gate.outputs.busy }}
     steps:
       - uses: actions/checkout@v5
-        if: github.event_name == 'workflow_dispatch' && (inputs.test_alert || inputs.order_test != '')
 
       - name: Test alert
         if: github.event_name == 'workflow_dispatch' && inputs.test_alert
@@ -127,6 +128,15 @@ jobs:
           fi
           python3 .github/scripts/push_bark.py "下单演练（不是 Duo）" "$(cat hits.txt)
           点开直接进这款的购买页" "$link"
+
+      # Stock in the last 30 minutes: make sure the 10-second checks
+      # (surge.yml) are running, restarting them if they broke.
+      - name: Keep the 10-second checks going
+        if: github.event_name != 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/surge.sh "$SURGE_REGION"
 
       - name: Skip if another run is active
         id: gate

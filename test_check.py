@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import unittest
+import urllib.parse
 from unittest import mock
 
 import check
@@ -351,6 +352,68 @@ class MainTest(unittest.TestCase):
         cold = sum("location=cold" in u for u in client.urls)
         self.assertEqual(cold, 5)  # still once a minute: at 0, 60, ..., 240 s
         self.assertEqual(hot, 9)  # every 30 seconds
+
+    def run_paced(self, phase, responses=None, extra=()):
+        """A paced runner on a fake wall clock; returns [(time, location)] asked and on-change calls."""
+        clock = [1000.0]
+        asked = []
+        client = FakeClient({})
+
+        def get_json(url):
+            loc = urllib.parse.parse_qs(url.split("?")[1])["location"][0]
+            asked.append((clock[0], loc))
+            return (responses or {}).get(loc, RESPONSE)
+        client.get_json = get_json
+        with mock.patch.object(check, "AppleClient", lambda *a, **k: client), \
+                mock.patch.object(check.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)), \
+                mock.patch.object(check.time, "time", lambda: clock[0]), \
+                mock.patch.object(check.random, "random", lambda: 0), \
+                mock.patch.object(check.subprocess, "run") as run, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = check.main(["--product", PRODUCT, "--location", "a; b; c", "--parts", f"{A},{B}",
+                               "--pace", "30", "--phase", str(phase),
+                               "--start-at", "1020", "--end-at", "1110", *extra])
+        return code, asked, run
+
+    def test_paced_runners_interleave_to_every_10_seconds(self):
+        asked = []
+        for phase in (0, 10, 20):
+            code, a, _ = self.run_paced(phase)
+            self.assertEqual(code, 0)
+            asked += a
+        times_a = sorted(round(t) for t, loc in asked if loc == "a")
+        # From 1020 to 1110, location a is asked every 10 seconds by one of the three.
+        self.assertEqual(times_a, list(range(1020, 1110, 10)))
+        # Each runner alone asks one location every 10 seconds (30 s / 3 locations).
+        _, one, _ = self.run_paced(20)
+        gaps = {round(b[0] - a[0]) for a, b in zip(one, one[1:])}
+        self.assertEqual(gaps, {10})
+
+    def test_paced_alert_waits_for_a_full_round(self):
+        empty = {"body": {"stores": [store("Store Z", "R9", 1.0, {A: ("unavailable", "Phone X 256GB Blue")})]}}
+        code, _, run = self.run_paced(0, {"a": empty, "b": empty, "c": RESPONSE}, ["--on-change", "x"])
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_count, 1)  # once all three were seen, never on a partial view
+
+    def test_paced_stop_on_block(self):
+        blocked = {"b": check.Blocked("HTTP 541")}
+        client_responses = blocked
+        clock = [1000.0]
+        client = FakeClient({})
+
+        def get_json(url):
+            loc = urllib.parse.parse_qs(url.split("?")[1])["location"][0]
+            if loc in client_responses:
+                raise client_responses[loc]
+            return RESPONSE
+        client.get_json = get_json
+        with mock.patch.object(check, "AppleClient", lambda *a, **k: client), \
+                mock.patch.object(check.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)), \
+                mock.patch.object(check.time, "time", lambda: clock[0]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = check.main(["--product", PRODUCT, "--location", "a; b", "--parts", A,
+                               "--pace", "30", "--end-at", "1100", "--stop-on-block"])
+        self.assertEqual(code, 2)
 
     def test_stop_on_block(self):
         blocked = check.Blocked("HTTP 541")
