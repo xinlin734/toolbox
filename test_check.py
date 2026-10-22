@@ -265,7 +265,7 @@ class PickupTest(unittest.TestCase):
 
 class ModelFilterTest(unittest.TestCase):
     def test_keep_model_matches_title_text(self):
-        parts = {A: {"title": "Phone X Pro Max 256GB"}, B: {"title": "Phone X Pro 256GB"}, C: {}}
+        parts = {A: {"title": "Phone X Pro\u00a0Max 256GB"}, B: {"title": "Phone X Pro 256GB"}, C: {}}
         check.keep_model(parts, "pro max")
         self.assertEqual(list(parts), [A, C])
 

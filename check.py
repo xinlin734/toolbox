@@ -225,7 +225,10 @@ def learn_titles(parts, rows, product):
 
 def keep_model(parts, text):
     """Drop parts whose title lacks text, e.g. "Pro Max"; parts with no title yet stay."""
-    for part in [p for p, meta in parts.items() if meta.get("title") and text.lower() not in meta["title"].lower()]:
+    # Apple's titles often put a no-break space inside names such as "Pro Max".
+    text = " ".join(text.lower().split())
+    for part in [p for p, meta in parts.items()
+                 if meta.get("title") and text not in " ".join(meta["title"].lower().split())]:
         del parts[part]
 
 
