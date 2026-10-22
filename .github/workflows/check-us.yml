@@ -105,7 +105,9 @@ jobs:
           python3 check.py --product "$product" --location "$zip" ${model:+--model "$model"} \
             --hits-file hits.txt --link-file link.txt > run.log 2>&1 || true
           grep -m1 '共找到' run.log || true
-          grep -o '[0-9]* 家店 × [0-9]* 个型号 → 可自提 [0-9]* 个' run.log || grep -E '⚠️|拦截|失败' run.log | head -3
+          grep -o '[0-9]* 家店 × [0-9]* 个型号 → 可自提 [0-9]* 个' run.log || true
+          grep -E '⚠️|拦截|失败|Apple 提示' run.log | head -3 || true
+          [ -n "$model" ] && echo "结果里提到 $model 的行：$(grep -ci "$model" run.log || true)"
           link=$(head -n1 link.txt 2>/dev/null || true)
           if [ -n "$link" ]; then
             body="$(cat hits.txt)

@@ -224,8 +224,8 @@ def learn_titles(parts, rows, product):
 
 
 def keep_model(parts, text):
-    """Keep only parts whose title contains text, e.g. "Pro Max"; untitled parts go too."""
-    for part in [p for p, meta in parts.items() if text.lower() not in (meta.get("title") or "").lower()]:
+    """Drop parts whose title lacks text, e.g. "Pro Max"; parts with no title yet stay."""
+    for part in [p for p, meta in parts.items() if meta.get("title") and text.lower() not in meta["title"].lower()]:
         del parts[part]
 
 
