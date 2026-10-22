@@ -113,11 +113,16 @@ jobs:
             # Nothing to drill with: show what Apple answered (model names
             # and pickup status only, no stores) and send no push.
             echo "::warning::附近没查到可自提的${model:+ $model}，不推送"
-            python3 check.py --product "$product" --location "$zip" --all > all.log 2>&1 || true
-            grep -E '家店|Apple 提示|⚠️' all.log | head -3 || true
-            # Each model row: "✔" if in stock, then the name before its part number.
-            grep -E '^ {3}.*M[A-Z0-9]{4}LL/A' all.log | sed -E 's/ +M[A-Z0-9]{4}LL\/A.*//; s/^ +//; s/ +/ /g' \
-              | sort | uniq -c | head -40
+            # Model names and status as Apple returns them, before any filtering.
+            python3 - "$product" "$zip" <<'PY' 2>&1 | tail -40
+          import collections, sys, check
+          client = check.AppleClient(check.US, sys.argv[1])
+          parts = check.discover_parts(client, sys.argv[1])
+          rows, notices = check.check_once(client, parts, sys.argv[2])
+          print("门店数", len({r.store_number for r in rows}), "提示", notices)
+          for (title, status), n in sorted(collections.Counter((r.title or r.part, r.status) for r in rows).items()):
+              print(n, repr(title), status)
+          PY
             exit 0
           fi
           python3 .github/scripts/push_bark.py "下单演练（不是 Duo）" "$(cat hits.txt)
