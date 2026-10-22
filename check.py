@@ -497,6 +497,68 @@ def watch_delivery(client, parts, args, previous):
     return delivery
 
 
+# ---------- paced watch (several runners in step) ----------
+
+def pace_watch(client, parts, args):
+    """Ask each location once every PACE seconds, on a wall-clock schedule.
+
+    Rounds start at times t with t % PACE == PHASE, and the locations of a
+    round are spread evenly across it. Runners given the same PACE and
+    different PHASEs interleave: three runners at phases 0, 10 and 20 with
+    PACE 30 ask every location every 10 seconds, while each runner itself
+    asks only one location per PACE / n seconds.
+    """
+    locations = split_locations(args.location)
+    spacing = args.pace / len(locations)
+    start = max(time.time(), args.start_at or 0)
+    end = args.end_at or float("inf")
+    print(f"开始监控，每 {args.pace} 秒查一轮（相位 {args.phase} 秒），"
+          f"每个地点间隔 {spacing:g} 秒。", flush=True)
+    latest, seen = {}, None
+    t = (start - args.phase) // args.pace * args.pace + args.phase  # round in progress at start
+    while True:
+        for i, loc in enumerate(locations):
+            at = t + i * spacing
+            if at < start - 1:
+                continue  # joined mid-round
+            if at >= end:
+                return 0
+            wait = at - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                latest.update(check_locations(client, parts, [loc], args.batch_size))
+            except Blocked as e:
+                if args.stop_on_block:
+                    print(f"[{datetime.now():%H:%M:%S}] 被 Apple 拦截（{e}），不代表没货；退出", file=sys.stderr)
+                    return 2
+                print(f"[{datetime.now():%H:%M:%S}] 被 Apple 拦截（{e}），不代表没货", file=sys.stderr)
+                continue
+            except (urllib.error.URLError, TimeoutError) as e:
+                print(f"[{datetime.now():%H:%M:%S}] 查询失败：{e}（下次继续）", file=sys.stderr)
+                continue
+            if len(latest) < len(locations):
+                continue  # one full round first, so a partial view never closes an alert
+            rows, notices = merge_rows(latest, args.city)
+            learn_titles(parts, rows, args.product)
+            if args.model:
+                keep_model(parts, args.model)
+            hits = [r for r in rows if r.available and r.part in parts]
+            current = {(r.store_number, r.part) for r in hits}
+            if current != seen:
+                if args.hits_file:
+                    write_hits(args.hits_file, hits, parts)
+                if args.link_file:
+                    write_link(args.link_file, hits, client.region)
+                if args.on_change:
+                    subprocess.run(args.on_change, shell=True, check=False)
+                seen = current
+            if i == len(locations) - 1:
+                print_report(rows, notices, parts, args.all)
+                sys.stdout.flush()
+        t += args.pace
+
+
 # ---------- CLI ----------
 
 def parse_args(argv=None):
@@ -519,6 +581,12 @@ def parse_args(argv=None):
                    help="--watch 模式下如果 Apple 还没开放自提（所有门店都显示“稍后再来”），改成每隔这么多秒查一次")
     p.add_argument("--hot-interval", type=int, metavar="SECONDS",
                    help="--watch 模式下某个地点查到有货后，改成每隔这么多秒只查那个地点（每个间隔仍做一次完整轮），直到没货")
+    p.add_argument("--pace", type=int, metavar="SECONDS",
+                   help="按墙上时钟每 N 秒查一轮，各地点在一轮内均匀错开（几台机器配合用，见 --phase）")
+    p.add_argument("--phase", type=int, default=0, metavar="SECONDS",
+                   help="--pace 模式下这台机器的轮次从每个周期的第几秒开始")
+    p.add_argument("--start-at", type=float, metavar="EPOCH", help="--pace 模式下从这个时间开始查")
+    p.add_argument("--end-at", type=float, metavar="EPOCH", help="--pace 模式下查到这个时间为止")
     p.add_argument("--hits-file", metavar="PATH", help="每次查完把有货的门店和型号写进这个文件")
     p.add_argument("--link-file", metavar="PATH", help="每次查完把最近一家有货门店那款的下单链接写进这个文件")
     p.add_argument("--on-change", metavar="CMD", help="--watch 模式下，第一次查完以及有货情况变化时执行这条命令")
@@ -546,6 +614,13 @@ def main(argv=None):
         for part in parts:
             print(part)
         return 0
+
+    if args.pace:
+        try:
+            return pace_watch(client, parts, args)
+        except KeyboardInterrupt:
+            print("\n已停止。")
+            return 0
 
     if not args.watch:
         try:
