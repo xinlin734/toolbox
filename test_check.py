@@ -263,6 +263,13 @@ class PickupTest(unittest.TestCase):
                 self.assertEqual(f.read(), "")
 
 
+class ModelFilterTest(unittest.TestCase):
+    def test_keep_model_matches_title_text(self):
+        parts = {A: {"title": "Phone X Pro Max 256GB"}, B: {"title": "Phone X Pro 256GB"}, C: {}}
+        check.keep_model(parts, "pro max")
+        self.assertEqual(list(parts), [A])
+
+
 class DeliveryTest(unittest.TestCase):
     def test_delivery_url_uses_postal_code(self):
         self.assertEqual(check.delivery_url([A, B], "10001"),

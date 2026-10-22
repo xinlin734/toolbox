@@ -223,6 +223,12 @@ def learn_titles(parts, rows, product):
         del parts[part]
 
 
+def keep_model(parts, text):
+    """Keep only parts whose title contains text, e.g. "Pro Max"; untitled parts go too."""
+    for part in [p for p, meta in parts.items() if text.lower() not in (meta.get("title") or "").lower()]:
+        del parts[part]
+
+
 def label(part, parts):
     return (parts.get(part) or {}).get("title") or part
 
@@ -497,6 +503,7 @@ def parse_args(argv=None):
     p.add_argument("--location", required=True,
                    help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”。多个地点用分号隔开，结果合并去重")
     p.add_argument("--city", help="只看这个城市的门店（附近搜索可能会带出别的城市）")
+    p.add_argument("--model", help="只看名称里带这段文字的型号，例如 \"Pro Max\"")
     p.add_argument("--parts", help="手动指定型号，逗号分隔（跳过自动抓取）")
     p.add_argument("--all", action="store_true", help="显示每家店每个型号的状态（包括没货的）")
     p.add_argument("--list-parts", action="store_true", help="只列出找到的型号，不查库存")
@@ -547,6 +554,8 @@ def main(argv=None):
             print(f"查询失败：{e}", file=sys.stderr)
             return 2
         learn_titles(parts, rows, args.product)
+        if args.model:
+            keep_model(parts, args.model)
         hits = print_report(rows, notices, parts, args.all)
         if args.hits_file:
             write_hits(args.hits_file, hits, parts)
@@ -579,6 +588,8 @@ def main(argv=None):
                 latest.update(check_locations(client, parts, batch, args.batch_size))
                 rows, notices = merge_rows(latest, args.city)
                 learn_titles(parts, rows, args.product)
+                if args.model:
+                    keep_model(parts, args.model)
                 hits = print_report(rows, notices, parts, args.all)
                 sys.stdout.flush()
                 current = {(r.store_number, r.part) for r in hits}

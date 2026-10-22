@@ -20,6 +20,10 @@ on:
         description: "发一条测试提醒"
         type: boolean
         default: false
+      order_test:
+        description: "下单演练：一款现在买得到的产品页名和型号，例如 iphone-17-pro Pro Max（只推给 BARK_URL 那台）"
+        type: string
+        default: ""
       chained:
         description: "内部用：由上一轮自动启动"
         type: boolean
@@ -67,7 +71,7 @@ jobs:
       busy: ${{ steps.gate.outputs.busy }}
     steps:
       - uses: actions/checkout@v5
-        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
+        if: github.event_name == 'workflow_dispatch' && (inputs.test_alert || inputs.order_test != '')
 
       - name: Test alert
         if: github.event_name == 'workflow_dispatch' && inputs.test_alert
@@ -86,12 +90,43 @@ jobs:
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。
           ${link:+点开看看是不是直接进到某一款的购买页。}" "$link"
 
+      # The real alert path for a model on sale now: one pickup check near the
+      # ZIP, then the push a stock alert would send, to the first phone only.
+      - name: Order drill
+        if: github.event_name == 'workflow_dispatch' && inputs.order_test != ''
+        env:
+          BARK_URL: ${{ secrets.BARK_URL }}
+          TARGET: ${{ secrets.TARGET }}
+          ORDER_TEST: ${{ inputs.order_test }}
+        run: |
+          read -r product model <<< "$ORDER_TEST"
+          zip=${TARGET#* }
+          echo "::add-mask::$zip"
+          python3 check.py --product "$product" --location "$zip" ${model:+--model "$model"} \
+            --hits-file hits.txt --link-file link.txt > run.log 2>&1 || true
+          grep -m1 '共找到' run.log || true
+          grep -o '[0-9]* 家店 × [0-9]* 个型号 → 可自提 [0-9]* 个' run.log || grep -E '⚠️|拦截|失败' run.log | head -3
+          link=$(head -n1 link.txt 2>/dev/null || true)
+          if [ -n "$link" ]; then
+            body="$(cat hits.txt)
+          点开直接进这款的购买页"
+          else
+            link="https://www.apple.com/shop/buy-iphone/$product"
+            body="附近暂时没有${model:+ $model }可自提（或没查到），点开是购买页"
+          fi
+          python3 .github/scripts/push_bark.py "下单演练（不是 Duo）" "$body" "$link"
+
       - name: Skip if another run is active
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
           CHAINED: ${{ github.event_name == 'workflow_dispatch' && (inputs.chained || inputs.rescue) }}
+          TEST_ONLY: ${{ github.event_name == 'workflow_dispatch' && (inputs.test_alert || inputs.order_test != '') }}
         run: |
+          # A test run only sends its test.
+          if [ "$TEST_ONLY" = "true" ]; then
+            echo "busy=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if [ "$CHAINED" = "true" ] || [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "busy=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
