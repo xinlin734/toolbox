@@ -1,9 +1,13 @@
 name: check-us
 
-# Each run watches for WATCH_MINUTES and then starts the next run itself, so
-# checks go on back to back; the schedule is only a backup for a broken chain.
-# Pickup is checked every minute, or every 5 minutes while Apple has it
-# switched off; delivery dates every 5 minutes.
+# Each run watches for WATCH_MINUTES on one runner and starts the next run on a
+# fresh runner shortly before it ends; the schedule is only a backup for a
+# broken chain. Short runs keep each runner well under the number of requests
+# after which Apple starts refusing one IP. If Apple refuses anyway, the run
+# logs it on the "检查被拦记录" issue and a rescue run on a fresh runner takes
+# over at once. Pickup is checked every minute (every 5 minutes while Apple
+# has it switched off, until MINUTE_FROM), every 30 seconds while a store
+# shows stock; delivery dates every 5 minutes.
 #
 # The repo is public: product and ZIP come from the TARGET secret
 # ("<product> <zip>"), and the checker's output stays on the runner.
@@ -20,6 +24,18 @@ on:
         description: "内部用：由上一轮自动启动"
         type: boolean
         default: false
+      rescue:
+        description: "内部用：被拦后换机器接替"
+        type: boolean
+        default: false
+      until:
+        description: "内部用：接替查到这个时间（epoch 秒）"
+        type: string
+        default: ""
+      prev_run:
+        description: "内部用：等这一轮结束再开始查"
+        type: string
+        default: ""
   push:
     paths:
       - check.py
@@ -32,18 +48,26 @@ permissions:
   issues: write
 
 env:
-  WATCH_MINUTES: "20"
+  WATCH_MINUTES: "4"
+  # From this day (Los Angeles time) pickup is asked every minute even while
+  # Apple still shows it switched off.
+  MINUTE_FROM: "2026-10-23"
+  BLOCK_ISSUE_TITLE: "检查被拦记录"
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   STOCK_ISSUE_TITLE: "有货可自提"
   GH_REPO: ${{ github.repository }}
 
 jobs:
-  check:
+  # Chained and rescue runs always proceed. Anything else steps aside while
+  # another run is active, so only one watcher chain queries Apple.
+  gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      busy: ${{ steps.gate.outputs.busy }}
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'workflow_dispatch' && inputs.test_alert
 
       - name: Test alert
         if: github.event_name == 'workflow_dispatch' && inputs.test_alert
@@ -57,13 +81,11 @@ jobs:
           gh issue close "$url" > /dev/null
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
 
-      # Chained runs always proceed. Anything else steps aside while another
-      # run is active, so only one watcher queries Apple at a time.
       - name: Skip if another run is active
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          CHAINED: ${{ github.event_name == 'workflow_dispatch' && inputs.chained }}
+          CHAINED: ${{ github.event_name == 'workflow_dispatch' && (inputs.chained || inputs.rescue) }}
         run: |
           if [ "$CHAINED" = "true" ] || [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "busy=false" >> "$GITHUB_OUTPUT"; exit 0
@@ -72,8 +94,29 @@ jobs:
             --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and .event != \"push\" and .status != \"completed\")] | length")
           echo "busy=$([ "$others" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+  check:
+    needs: gate
+    if: needs.gate.outputs.busy != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # This run was started early so the hand-over leaves no gap. Wait for
+      # the previous run to finish so its saved state (best delivery dates)
+      # is restored below and Apple is asked by one runner at a time.
+      - name: Wait for the previous run
+        if: inputs.prev_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: ${{ inputs.prev_run }}
+        run: |
+          for i in $(seq 30); do
+            [ "$(gh run view "$PREV" --json status --jq .status)" = completed ] && exit 0
+            sleep 3
+          done
+
       - name: Restore state
-        if: steps.gate.outputs.busy != 'true'
         uses: actions/cache/restore@v4
         with:
           path: state
@@ -82,42 +125,91 @@ jobs:
 
       - name: Check
         id: watch
-        if: steps.gate.outputs.busy != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           TARGET: ${{ secrets.TARGET }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          UNTIL: ${{ inputs.until }}
         run: |
-          # A push only smoke-tests one round.
-          duration=$([ "$GITHUB_EVENT_NAME" = "push" ] && echo 0 || echo $((WATCH_MINUTES * 60)))
+          # A push only smoke-tests one round; a rescue run watches until the
+          # run it replaces would have ended.
+          now=$(date +%s)
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then duration=0
+          elif [ -n "$UNTIL" ]; then duration=$(( UNTIL - now > 0 ? UNTIL - now : 0 ))
+          else duration=$((WATCH_MINUTES * 60)); fi
+          echo "until=$(( now + duration ))" >> "$GITHUB_OUTPUT"
+          closed=(--closed-interval 300)
+          [[ "$(TZ=America/Los_Angeles date +%F)" < "$MINUTE_FROM" ]] || closed=()
           bash .github/scripts/run_check.sh us "$TARGET" \
-            --watch 60 --duration "$duration" --closed-interval 300 --stop-on-block \
+            --watch 60 --hot-interval 30 --duration "$duration" "${closed[@]}" --stop-on-block \
             --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt" \
             --delivery --delivery-file delivery.json \
             --on-delivery-change "python3 .github/scripts/notify_delivery.py delivery.json state/best.json"
 
       - name: Save state
-        if: steps.gate.outputs.busy != 'true' && hashFiles('state/best.json') != ''
+        if: hashFiles('state/best.json') != ''
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: state
           key: state-us-${{ github.run_id }}
 
-      # Hand over to a fresh run on a fresh runner. After a block, wait a
-      # little first instead of asking Apple again right away.
-      - name: Start the next run
-        if: >-
-          !cancelled() && github.event_name != 'push' && steps.gate.outputs.busy != 'true'
-          && (steps.watch.outputs.code == '0' || steps.watch.outputs.code == '2')
+      # Hand the rest of this run to a fresh runner, unless the next regular
+      # run is about to take over anyway.
+      - name: Log a block
+        if: steps.watch.outputs.code == '2'
         env:
           GH_TOKEN: ${{ github.token }}
-          CODE: ${{ steps.watch.outputs.code }}
+          OWNER: ${{ github.repository_owner }}
+          UNTIL: ${{ steps.watch.outputs.until }}
         run: |
-          [ "$CODE" = "2" ] && sleep 120
+          if [ $(( UNTIL - $(date +%s) )) -gt 60 ]; then
+            action="换机器失败，等下一轮接上"
+            for i in 1 2 3; do
+              if gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" \
+                   -f rescue=true -f until="$UNTIL" -f prev_run="$GITHUB_RUN_ID"; then
+                action="已立即换新机器接着查"; break
+              fi
+              sleep 5
+            done
+          else
+            action="下一轮马上换新机器接上"
+          fi
+          note="@$OWNER 美国在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
+          num=$(gh issue list --state open --limit 100 --json number,title \
+                --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
+          if [ -z "$num" ]; then
+            gh issue create --title "$BLOCK_ISSUE_TITLE" --body "$note" > /dev/null
+          else
+            gh issue comment "$num" --body "$note" > /dev/null
+          fi
+
+  # Start the next run on a fresh runner shortly before this one's watcher
+  # stops, so the hand-over leaves no gap.
+  next:
+    needs: gate
+    if: >-
+      github.event_name != 'push' && needs.gate.outputs.busy != 'true'
+      && !inputs.rescue
+    runs-on: ubuntu-latest
+    steps:
+      # Time the hand-over from when this run's watcher starts, which is when
+      # the previous run has finished.
+      - name: Start the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: ${{ inputs.prev_run }}
+        run: |
+          for i in $(seq 30); do
+            [ -z "$PREV" ] && break
+            [ "$(gh run view "$PREV" --json status --jq .status)" = completed ] && break
+            sleep 3
+          done
+          sleep $((WATCH_MINUTES * 60 - 45))
           for i in 1 2 3; do
-            gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" -f chained=true && break
+            gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" \
+              -f chained=true -f prev_run="$GITHUB_RUN_ID" && break
             sleep 15
           done
