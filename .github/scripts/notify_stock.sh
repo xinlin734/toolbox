@@ -3,18 +3,21 @@
 # One open issue while stock exists: created on first sighting, commented when
 # the list changes, closed when everything is gone. The issue is public, so it
 # carries only store and model names.
-# Each new sighting also goes to Bark when BARK_URL is set. BUY_URL, if set,
-# is added as the order link.
+# Each new sighting also goes to Bark when BARK_URL is set. The order link is
+# the model page written by check.py --link-file (tapping the push opens that
+# model ready to add to bag), else BUY_URL, the product's buy page.
 # Needs GH_TOKEN, OWNER and STOCK_ISSUE_TITLE in the environment.
 set -euo pipefail
 hits=${1:-hits.txt}
+order=$(head -n1 "${2:-link.txt}" 2>/dev/null || true)
+order=${order:-${BUY_URL:-}}
 
 num=$(gh issue list --state open --limit 100 --json number,title \
       --jq 'map(select(.title == env.STOCK_ISSUE_TITLE)) | .[0].number // empty')
 
 if [ -s "$hits" ]; then
   sig=$(sha256sum "$hits" | cut -c1-12)
-  link=${BUY_URL:+下单：$BUY_URL}
+  link=${order:+下单：$order}
   body="$(printf '@%s\n\n%s\n\n%s\n\n<!-- sig:%s -->' "$OWNER" "$(cat "$hits")" "$link" "$sig")"
   if [ -z "$num" ]; then
     gh issue create --title "$STOCK_ISSUE_TITLE" --body "$body" > /dev/null
@@ -25,7 +28,8 @@ if [ -s "$hits" ]; then
       *) gh issue comment "$num" --body "$body" > /dev/null ;;
     esac
   fi
-  python3 "$(dirname "$0")/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")" "${BUY_URL:-}"
+  python3 "$(dirname "$0")/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
+点开直接进这款的购买页" "$order"
 elif [ -n "$num" ]; then
   gh issue close "$num" --comment "没货了。" > /dev/null
 fi

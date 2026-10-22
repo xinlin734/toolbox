@@ -136,7 +136,8 @@ jobs:
           echo "until=$(( now + duration ))" >> "$GITHUB_OUTPUT"
           bash .github/scripts/run_check.sh cn "$TARGET" \
             --watch 60 --hot-interval 30 --duration "$duration" --stop-on-block \
-            --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt"
+            --hits-file hits.txt --link-file link.txt \
+            --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt"
 
       - name: Log a block
         if: steps.watch.outputs.code == '2'

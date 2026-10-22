@@ -406,6 +406,18 @@ def write_hits(path, hits, parts):
             f.write(f"- {where}：{label(r.part, parts)}\n")
 
 
+def order_link(region, part):
+    """Apple's page for one model: opens the buy page with that model already chosen."""
+    return f"{region.shop}/product/{part}"
+
+
+def write_link(path, hits, region):
+    """The order link for the nearest store's first model in stock; empty when none."""
+    with open(path, "w", encoding="utf-8") as f:
+        if hits:
+            f.write(order_link(region, hits[0].part) + "\n")
+
+
 # ---------- delivery ----------
 
 def delivery_url(parts, zip_code, region=US):
@@ -498,6 +510,7 @@ def parse_args(argv=None):
     p.add_argument("--hot-interval", type=int, metavar="SECONDS",
                    help="--watch 模式下某个地点查到有货后，改成每隔这么多秒只查那个地点（每个间隔仍做一次完整轮），直到没货")
     p.add_argument("--hits-file", metavar="PATH", help="每次查完把有货的门店和型号写进这个文件")
+    p.add_argument("--link-file", metavar="PATH", help="每次查完把最近一家有货门店那款的下单链接写进这个文件")
     p.add_argument("--on-change", metavar="CMD", help="--watch 模式下，第一次查完以及有货情况变化时执行这条命令")
     p.add_argument("--delivery", action="store_true", help="同时查寄送最早日期，只支持美国（--watch 模式下每 5 分钟查一次）")
     p.add_argument("--delivery-file", metavar="PATH", help="把寄送日期写进这个 JSON 文件")
@@ -537,6 +550,8 @@ def main(argv=None):
         hits = print_report(rows, notices, parts, args.all)
         if args.hits_file:
             write_hits(args.hits_file, hits, parts)
+        if args.link_file:
+            write_link(args.link_file, hits, client.region)
         if args.delivery:
             watch_delivery(client, parts, args, None)
         return 0 if hits else 1
@@ -569,6 +584,8 @@ def main(argv=None):
                 current = {(r.store_number, r.part) for r in hits}
                 if args.hits_file:
                     write_hits(args.hits_file, hits, parts)
+                if args.link_file:
+                    write_link(args.link_file, hits, client.region)
                 if args.on_change and current != seen:
                     subprocess.run(args.on_change, shell=True, check=False)
                 seen = current

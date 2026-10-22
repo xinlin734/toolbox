@@ -76,10 +76,15 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          TARGET: ${{ secrets.TARGET }}
         run: |
           url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
           gh issue close "$url" > /dev/null
-          python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
+          # Link to one model's page, the same kind of link a stock alert opens.
+          part=$(python3 check.py --product "${TARGET%% *}" --location - --list-parts 2>/dev/null | grep -m1 '^M' || true)
+          link=${part:+https://www.apple.com/shop/product/$part}
+          python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。
+          ${link:+点开看看是不是直接进到某一款的购买页。}" "$link"
 
       - name: Skip if another run is active
         id: gate
@@ -144,7 +149,8 @@ jobs:
           [[ "$(TZ=America/Los_Angeles date +%F)" < "$MINUTE_FROM" ]] || closed=()
           bash .github/scripts/run_check.sh us "$TARGET" \
             --watch 60 --hot-interval 30 --duration "$duration" "${closed[@]}" --stop-on-block \
-            --hits-file hits.txt --on-change "bash .github/scripts/notify_stock.sh hits.txt" \
+            --hits-file hits.txt --link-file link.txt \
+            --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt" \
             --delivery --delivery-file delivery.json \
             --on-delivery-change "python3 .github/scripts/notify_delivery.py delivery.json state/best.json"
 

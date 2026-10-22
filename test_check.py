@@ -251,6 +251,17 @@ class PickupTest(unittest.TestCase):
             with open(path, encoding="utf-8") as f:
                 self.assertEqual(f.read(), "- Store A：Phone X 256GB Blue\n")
 
+    def test_link_file_points_at_nearest_hit(self):
+        hits = [r for r in check.parse_pickup(RESPONSE)[0] if r.available]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "link.txt")
+            check.write_link(path, hits, check.US)
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), f"https://www.apple.com/shop/product/{A}\n")
+            check.write_link(path, [], check.REGIONS["cn"])
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "")
+
 
 class DeliveryTest(unittest.TestCase):
     def test_delivery_url_uses_postal_code(self):
