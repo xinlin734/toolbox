@@ -38,7 +38,11 @@ echo "code=$code" >> "$GITHUB_OUTPUT"
 # run.log names nearby stores; only counts and error lines (masked) reach the public log.
 grep -m1 '共找到' run.log
 grep -E '⚠️|失败|拦截|没找到|Apple 提示' run.log | sort | uniq -c | head -5
-echo "查了 $(grep -c '可自提 [0-9]* 个' run.log) 轮，最后一轮 $(grep -o '[0-9]* 家店 × [0-9]* 个型号 → 可自提 [0-9]* 个' run.log | tail -1)"
+rounds=$(grep -c '可自提 [0-9]* 个' run.log)
+echo "查了 $rounds 轮，最后一轮 $(grep -o '[0-9]* 家店 × [0-9]* 个型号 → 可自提 [0-9]* 个' run.log | tail -1)"
+# Counts as an annotation too, so a monitor can check every run's rounds
+# through the API without downloading logs.
+echo "::notice title=rounds::rounds=$rounds failed=$(grep -c '查询失败' run.log) code=$code"
 closed=$(grep -c '还没开放自提' run.log)
 [ "$closed" -gt 0 ] && echo "其中 $closed 轮自提还没开放"
 [ "$code" -eq 0 ] || echo "::warning::被 Apple 拦截或查询失败（不代表没货），换一台机器继续"
