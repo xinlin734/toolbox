@@ -153,10 +153,11 @@ jobs:
               echo "30 分钟内没再看到货，这条到此结束"; touch handed
               # Hand the group straight back to the regular checks (which step
               # aside while any lane runs), so there is no wait for their next
-              # 4-minute run. A group's lanes all stop within seconds of each
-              # other and each still sees the others running, so a "last lane"
-              # test never fires; the phase-0 lane hands back for the group.
-              if [ "$REGION" = cn ] && [ "$phase" = 0 ]; then
+              # 4-minute run. Lanes that stop together each still see the
+              # others running, so the phase-0 lane hands back for them; a lane
+              # that saw stock later and runs on alone hands back itself.
+              if [ "$REGION" = cn ] && { [ "$phase" = 0 ] ||
+                   [ "$(bash .github/scripts/surge.sh cn count "$group")" -le 1 ]; }; then
                 gh workflow run check-cn.yml --ref "$GITHUB_REF_NAME" -f rescue_group="$group" \
                   -f until=$(( until + 240 )) -f after_surge=true || true
               fi
