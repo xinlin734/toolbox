@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The lanes of the 10-second checks for REGION, as a JSON list: three per
-# place group, one for each 10-second phase of a 30-second round.
+# The lanes of the fast checks for REGION, as a JSON list: one per place
+# group and STEP-second phase of a PACE-second round (15 / 5: three lanes,
+# each place asked every 5 seconds).
 #   surge_lanes.sh REGION
 set -euo pipefail
 if [ "$1" = cn ]; then
@@ -12,4 +13,4 @@ if [ "$1" = cn ]; then
 else
   groups='[{"group": "美国", "locations": ""}]'
 fi
-jq -c '[range(0; 30; 10) as $p | .[] | . + {phase: $p, lane: "\(.group):\($p)"}]' <<< "$groups"
+jq -c --argjson pace "${PACE:-15}" --argjson step "${STEP:-5}" '[range(0; $pace; $step) as $p | .[] | . + {phase: $p, lane: "\(.group):\($p)"}]' <<< "$groups"

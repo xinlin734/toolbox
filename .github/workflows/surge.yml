@@ -1,19 +1,20 @@
 name: surge
 run-name: surge ${{ inputs.region }} ${{ inputs.chain }} ${{ inputs.lane }}
 
-# Once a store shows stock, the region is asked every 10 seconds until 30
-# minutes after the last stock is gone: mainland China at all 49 stores, the
+# Once a store shows stock, the region is asked every 5 seconds until 30
+# minutes after a lane last saw stock: mainland China at all 49 stores, the
 # US at every store near the ZIP. check-cn / check-us start this through
-# surge.sh when they first see stock, and restart it if it breaks. Started by
-# hand with keep_until, it also asks every 10 seconds until then without stock.
+# surge.sh when they see stock, and restart it if it breaks. Started by hand
+# with keep_until, it also asks every 5 seconds until then without stock.
+# Meanwhile check-cn steps aside so these get the runners.
 #
-# One runner asking every 10 seconds would be refused by Apple within a few
-# minutes, so each place group is shared by three runners ("lanes") on a
-# common clock: each asks every place every 30 seconds, offset by 10 seconds
-# from the others (surge_lanes.sh). A mainland group of 5 places is then 10
-# queries a minute per runner, so each lane hands over to a fresh runner
-# every CN_SECONDS, staying near 20 queries per runner, under the ~30 after
-# which Apple starts refusing.
+# One runner asking that often would be refused by Apple within a minute or
+# two, so each place group is shared by three runners ("lanes") on a common
+# clock: each asks every place every PACE (15) seconds, STEP (5) seconds
+# apart from the others (surge_lanes.sh). A mainland group of 5 places is
+# then 20 queries a minute per runner, so each lane hands over to a fresh
+# runner every CN_SECONDS (60), staying near 20 queries per runner, under
+# the ~30 after which Apple starts refusing.
 #
 # Every lane is its own chain of single-job runs and the lanes hand over at
 # staggered times, so only a few runners overlap at once: GitHub runs at most
@@ -48,6 +49,10 @@ on:
         description: "内部用：查到这个时间（epoch 秒）"
         type: string
         default: ""
+      last_seen:
+        description: "内部用：这条最后一次看到货的时间（epoch 秒）"
+        type: string
+        default: ""
 
 permissions:
   actions: write
@@ -55,11 +60,13 @@ permissions:
   statuses: write
 
 env:
-  PACE: "30"
-  CN_SECONDS: "120"
+  # Each runner asks every place every PACE seconds; lanes STEP seconds apart.
+  PACE: "15"
+  STEP: "5"
+  CN_SECONDS: "60"
   US_SECONDS: "240"
   # Lead time for the next runner to come up before a hand-over.
-  LEAD_SECONDS: "35"
+  LEAD_SECONDS: "30"
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
   REGION: ${{ inputs.region }}
@@ -78,6 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           START_AT: ${{ inputs.start_at }}
           CHAIN: ${{ inputs.chain }}
+          LAST_SEEN: ${{ inputs.last_seen }}
         run: |
           start_at=${START_AT:-$(( $(date +%s) + 45 ))}
           seconds=$([ "$REGION" = cn ] && echo "$CN_SECONDS" || echo "$US_SECONDS")
@@ -87,7 +95,7 @@ jobs:
             until=$(( start_at + LEAD_SECONDS + 15 + i * seconds / n ))
             gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" \
               -f chain="${CHAIN:-$GITHUB_RUN_ID}" -f lane="$lane" -f start_at="$start_at" -f until="$until" \
-              ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"}
+              -f last_seen="${LAST_SEEN:-$(date +%s)}" ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"}
             i=$(( i + 1 ))
           done <<< "$lanes"
           echo "$n 条，从 $(date -d @"$start_at" -u +%T) UTC 开始"
@@ -113,6 +121,7 @@ jobs:
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
           START_AT: ${{ inputs.start_at }}
           UNTIL: ${{ inputs.until }}
+          LAST_SEEN: ${{ inputs.last_seen }}
         run: |
           lane=$(bash .github/scripts/surge_lanes.sh "$REGION" | jq -c --arg l "$LANE" '.[] | select(.lane == $l)')
           group=$(jq -r .group <<< "$lane") phase=$(jq -r .phase <<< "$lane")
@@ -124,27 +133,25 @@ jobs:
           echo "until=$until" >> "$GITHUB_OUTPUT"
 
           # Shortly before this runner stops, hand the lane to a fresh one,
-          # as long as there was stock in the last 30 minutes (or keep_until).
+          # until 30 minutes after this lane last saw stock (or keep_until).
+          # One API call per hand-over: nine lanes hand over every minute and
+          # the repo's token allows 1,000 calls an hour.
           handover() {
             local wait=$(( until - LEAD_SECONDS - $(date +%s) ))
             [ "$wait" -gt 0 ] && sleep "$wait"
-            # Stock still showing here keeps the 30 minutes running.
-            [ -s hits.txt ] && bash .github/scripts/state.sh seen "$REGION"
-            if [ "${KEEP_UNTIL:-0}" -le "$until" ] && ! bash .github/scripts/surge.sh "$REGION" want; then
-              echo "30 分钟内没再看到货，这条到此结束"; touch handed; return 0
+            local seen=${LAST_SEEN:-$(date +%s)}
+            if [ -s hits.txt ]; then
+              seen=$(date +%s)
+              # For the regular checks' watchdog; one lane per group is enough.
+              [ "$phase" = 0 ] && bash .github/scripts/state.sh seen "$REGION"
             fi
-            # If a lane was started twice, the older chain carries on.
-            older=$(gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=50" \
-              --jq "[.workflow_runs[] | select(.status != \"completed\")
-                     | (.display_title | split(\" \")) | select(.[1] == \"$REGION\" and .[3] == \"$LANE\")
-                     | .[2] | tonumber | select(. < $CHAIN)] | length")
-            if [ "${older:-0}" -gt 0 ]; then
-              echo "这条有更早的接力在跑，停下"; touch handed; return 0
+            if [ "${KEEP_UNTIL:-0}" -le "$until" ] && [ $(( $(date +%s) - seen )) -ge 1800 ]; then
+              echo "30 分钟内没再看到货，这条到此结束"; touch handed; return 0
             fi
             for i in 1 2 3; do
               gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
-                -f lane="$LANE" -f start_at="$until" ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} \
-                && { touch handed; return 0; }
+                -f lane="$LANE" -f start_at="$until" -f last_seen="$seen" \
+                ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && { touch handed; return 0; }
               sleep 5
             done
           }
@@ -169,13 +176,15 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           UNTIL: ${{ steps.watch.outputs.until }}
           RESCUE: ${{ steps.watch.outputs.rescue }}
+          LAST_SEEN: ${{ inputs.last_seen }}
         run: |
           action="下一轮马上换新机器接上"
           if [ -n "$RESCUE" ]; then
             action="换机器失败，等下一轮接上"
             for i in 1 2 3; do
               if gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
-                   -f lane="$LANE" -f until="$UNTIL" ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"}; then
+                   -f lane="$LANE" -f until="$UNTIL" -f last_seen="$LAST_SEEN" \
+                   ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"}; then
                 action="已立即换新机器接着查"; break
               fi
               sleep 5
