@@ -19,7 +19,7 @@ run-name: surge ${{ inputs.region }} ${{ inputs.chain }} ${{ inputs.lane }}
 # staggered times, so only a few runners overlap at once: GitHub runs at most
 # 20 jobs at a time across the regular checks and these. A refused lane
 # restarts at once on a fresh runner (the other two lanes of its group keep
-# asking meanwhile) and is logged on "检查被拦记录" like the regular checks.
+# asking meanwhile) and is logged as a "blocked" run annotation.
 on:
   workflow_dispatch:
     inputs:
@@ -52,7 +52,7 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: write
+  statuses: write
 
 env:
   PACE: "30"
@@ -60,7 +60,6 @@ env:
   US_SECONDS: "240"
   # Lead time for the next runner to come up before a hand-over.
   LEAD_SECONDS: "35"
-  BLOCK_ISSUE_TITLE: "检查被拦记录"
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
   REGION: ${{ inputs.region }}
@@ -129,6 +128,8 @@ jobs:
           handover() {
             local wait=$(( until - LEAD_SECONDS - $(date +%s) ))
             [ "$wait" -gt 0 ] && sleep "$wait"
+            # Stock still showing here keeps the 30 minutes running.
+            [ -s hits.txt ] && bash .github/scripts/state.sh seen "$REGION"
             if [ "${KEEP_UNTIL:-0}" -le "$until" ] && ! bash .github/scripts/surge.sh "$REGION" want; then
               echo "30 分钟内没再看到货，这条到此结束"; touch handed; return 0
             fi
@@ -182,10 +183,5 @@ jobs:
           fi
           where=$([ "$REGION" = cn ] && echo "国内·${LANE%%:*}" || echo "美国")
           note="$where（10 秒加密检查）在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
-          num=$(gh issue list --state open --limit 100 --json number,title \
-                --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
-          if [ -z "$num" ]; then
-            gh issue create --title "$BLOCK_ISSUE_TITLE" --body "$note" > /dev/null
-          else
-            gh issue comment "$num" --body "$note" > /dev/null
-          fi
+          # A run annotation, not an issue: issues email the owner.
+          echo "::warning title=blocked::${note%%。*}。"

@@ -495,7 +495,7 @@ class NotifyDeliveryTest(unittest.TestCase):
         _, message = notify_delivery.plan(self.with_date(A, None, "暂时买不了"), best)
         self.assertIsNone(message)
 
-    def test_main_writes_state_and_opens_issue_only_on_improvement(self):
+    def test_main_writes_state_and_pushes_only_on_improvement(self):
         with tempfile.TemporaryDirectory() as d:
             current, state = os.path.join(d, "delivery.json"), os.path.join(d, "state", "best.json")
             with open(current, "w", encoding="utf-8") as f:
@@ -506,12 +506,12 @@ class NotifyDeliveryTest(unittest.TestCase):
                 run.assert_not_called()
                 with open(current, "w", encoding="utf-8") as f:
                     json.dump(self.with_date(A, "20261106", "Fri, Nov 6 — Free"), f)
-                run.return_value.stdout = "https://github.com/o/r/issues/1\n"
                 notify_delivery.main(current, state)
             with open(state, encoding="utf-8") as f:
                 self.assertEqual(json.load(f)[A], "20261106")
-        self.assertEqual(run.call_args_list[0].args[0][:3], ["gh", "issue", "create"])
-        self.assertEqual(run.call_args_list[1].args[0], ["gh", "issue", "close", "https://github.com/o/r/issues/1"])
+        self.assertEqual(run.call_count, 1)
+        self.assertTrue(run.call_args.args[0][1].endswith("push_bark.py"))
+        self.assertEqual(run.call_args.args[0][2], notify_delivery.TITLE)
 
 
 

@@ -6,9 +6,8 @@
 DELIVERY_JSON is written by check.py --delivery-file. STATE_JSON keeps the
 earliest date seen per model; the workflow carries it between runs in the
 Actions cache so it never appears in the public repo. The first run only
-records a baseline. Each improvement opens an issue that @-mentions the owner
-and is closed right away: the notification is the point, not the issue.
-Needs gh plus GH_TOKEN and OWNER in the environment.
+records a baseline. Each improvement is pushed to Bark (no GitHub issue: the
+owner watches this repo, so an issue would also be an email).
 """
 
 import json
@@ -48,10 +47,8 @@ def main(delivery_path, state_path):
         best = None
     best, message = plan(current, best)
     if message:
-        url = subprocess.run(["gh", "issue", "create", "--title", TITLE,
-                              "--body", message],
-                             check=True, capture_output=True, text=True).stdout.strip()
-        subprocess.run(["gh", "issue", "close", url], check=True, capture_output=True)
+        push = os.path.join(os.path.dirname(os.path.abspath(__file__)), "push_bark.py")
+        subprocess.run([sys.executable, push, TITLE, message.replace("**", "")], check=False)
     os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(best, f, sort_keys=True)
