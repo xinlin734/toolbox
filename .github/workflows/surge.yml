@@ -124,6 +124,10 @@ jobs:
           LAST_SEEN: ${{ inputs.last_seen }}
         run: |
           lane=$(bash .github/scripts/surge_lanes.sh "$REGION" | jq -c --arg l "$LANE" '.[] | select(.lane == $l)')
+          if [ -z "$lane" ]; then
+            # A lane from an older layout: end its chain, never rescue it.
+            echo "没有这一条（$LANE），结束"; exit 0
+          fi
           group=$(jq -r .group <<< "$lane") phase=$(jq -r .phase <<< "$lane")
           export LOCATIONS=$(jq -r .locations <<< "$lane")
           export STOCK_ISSUE_TITLE=$([ "$REGION" = cn ] && echo "有货可自提（国内·$group）" || echo "有货可自提")
