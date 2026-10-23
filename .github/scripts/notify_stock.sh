@@ -13,28 +13,41 @@ hits=${1:-hits.txt}
 order=$(head -n1 "${2:-link.txt}" 2>/dev/null || true)
 order=${order:-${BUY_URL:-}}
 
-num=$(gh issue list --state open --limit 100 --json number,title \
-      --jq 'map(select(.title == env.STOCK_ISSUE_TITLE)) | .[0].number // empty')
+# The latest issue with this title: open, or closed within the last 30
+# minutes (stock that comes and goes keeps one issue and is reopened).
+since=$(date -u -d "-30 min" +%FT%TZ)
+read -r num state < <(gh api "repos/$GH_REPO/issues?state=all&sort=updated&direction=desc&per_page=50" \
+  --jq "[.[] | select(.pull_request == null and .title == env.STOCK_ISSUE_TITLE)] | .[0] // empty
+        | select(.state == \"open\" or .closed_at >= \"$since\") | \"\(.number) \(.state)\"") || true
 
 if [ -s "$hits" ]; then
   sig=$(sha256sum "$hits" | cut -c1-12)
   link=${order:+下单：$order}
   body="$(printf '%s\n\n%s\n\n<!-- sig:%s -->' "$(cat "$hits")" "$link" "$sig")"
-  if [ -z "$num" ]; then
+  new=$(cat "$hits")
+  if [ -z "${num:-}" ]; then
     gh issue create --title "$STOCK_ISSUE_TITLE" --body "$body" > /dev/null
   else
-    last=$(gh issue view "$num" --json body,comments --jq '([.body] + [.comments[].body]) | last')
-    case "$last" in
-      *"sig:$sig"*) exit 0 ;;
+    history=$(gh api "repos/$GH_REPO/issues/$num" --jq "select(.created_at >= \"$since\") | .body"; \
+              gh api "repos/$GH_REPO/issues/$num/comments?per_page=100" \
+                --jq ".[] | select(.created_at >= \"$since\") | .body")
+    [ "$state" = closed ] && gh issue reopen "$num" > /dev/null
+    case "$(gh api "repos/$GH_REPO/issues/$num/comments?per_page=100" --jq '.[-1].body // empty')" in
+      *"sig:$sig"*) ;;
       *) gh issue comment "$num" --body "$body" > /dev/null ;;
     esac
+    # Push only for a store and model not already pushed in the last 30
+    # minutes: several runners see the same stock, and it flickers.
+    new=$(grep -vxF -f <(printf '%s\n' "$history") "$hits" || true)
   fi
-  python3 "$(dirname "$0")/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
+  if [ -n "$new" ]; then
+    python3 "$(dirname "$0")/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
 点开直接进这款的购买页" "$order"
+  fi
   # Then ask every 10 seconds for the next half hour (SURGE_REGION: cn or us).
   if [ -n "${SURGE_REGION:-}" ]; then
     bash "$(dirname "$0")/surge.sh" "$SURGE_REGION" start || true
   fi
-elif [ -n "$num" ]; then
+elif [ -n "${num:-}" ] && [ "$state" = open ]; then
   gh issue close "$num" --comment "没货了。" > /dev/null
 fi
