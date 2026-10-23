@@ -35,6 +35,7 @@ start() {
 
 case "$mode" in
   want) want ;;
+  running) running ;;
   start) running || start ;;
   *) if want && ! running; then echo "有货后的 10 秒加密检查断了，重新启动"; start; fi ;;
 esac
