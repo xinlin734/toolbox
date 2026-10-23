@@ -16,6 +16,13 @@ want() {
   [ -n "$at" ] && [[ "$at" > "$(date -u -d "-$minutes min" +%FT%TZ)" ]]
 }
 
+count() {
+  gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=30" \
+    --jq "[.workflow_runs[] | select(.status != \"completed\")
+           | select(.display_title | startswith(\"surge $region\"))
+           | select(\"$group\" == \"\" or (.display_title | contains(\" $group:\")))] | length"
+}
+
 running() {
   # With a group (北方 …), only that group's lanes count: lanes end on their
   # own once their group has had no stock for 30 minutes.
@@ -39,6 +46,7 @@ start() {
 case "$mode" in
   want) want ;;
   running) running ;;  # surge.sh REGION running [GROUP]
+  count) count ;;      # surge.sh REGION count [GROUP]: runs in progress
   start) running || start ;;
   *) if want && ! running; then echo "有货后的 10 秒加密检查断了，重新启动"; start; fi ;;
 esac

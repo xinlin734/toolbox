@@ -150,7 +150,15 @@ jobs:
               [ "$phase" = 0 ] && bash .github/scripts/state.sh seen "$REGION"
             fi
             if [ "${KEEP_UNTIL:-0}" -le "$until" ] && [ $(( $(date +%s) - seen )) -ge 1800 ]; then
-              echo "30 分钟内没再看到货，这条到此结束"; touch handed; return 0
+              echo "30 分钟内没再看到货，这条到此结束"; touch handed
+              # The group's last lane hands the group straight back to the
+              # regular checks (which step aside while any lane runs), so
+              # there is no wait for their next 4-minute run.
+              if [ "$REGION" = cn ] && [ "$(bash .github/scripts/surge.sh cn count "$group")" -le 1 ]; then
+                gh workflow run check-cn.yml --ref "$GITHUB_REF_NAME" -f rescue_group="$group" \
+                  -f until=$(( until + 240 )) -f after_surge=true || true
+              fi
+              return 0
             fi
             for i in 1 2 3; do
               gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
