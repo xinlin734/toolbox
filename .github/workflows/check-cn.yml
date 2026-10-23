@@ -11,7 +11,7 @@ name: check-cn
 # Even at 5 a minute a runner is refused after about 6 minutes, so each run
 # watches for only 4 and the next run starts on fresh runners just before it
 # ends. While a place shows stock, that place alone is asked every 30 seconds.
-# A refusal is logged on the "检查被拦记录" issue so it never goes unnoticed,
+# A refusal is logged as a "blocked" run annotation so it never goes unnoticed,
 # and the refused group restarts at once on a fresh runner ("rescue" run) for
 # the rest of the 4 minutes, so a block costs well under a minute.
 on:
@@ -44,11 +44,10 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: write
+  statuses: write
 
 env:
   WATCH_MINUTES: "4"
-  BLOCK_ISSUE_TITLE: "检查被拦记录"
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
@@ -73,8 +72,6 @@ jobs:
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
         run: |
-          url=$(gh issue create --title "测试提醒" --body "能收到这条，有货时也能收到。")
-          gh issue close "$url" > /dev/null
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
 
       # Stock in the last 30 minutes: make sure the 10-second checks
@@ -172,13 +169,8 @@ jobs:
             action="下一轮马上换新机器接上"
           fi
           note="国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
-          num=$(gh issue list --state open --limit 100 --json number,title \
-                --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
-          if [ -z "$num" ]; then
-            gh issue create --title "$BLOCK_ISSUE_TITLE" --body "$note" > /dev/null
-          else
-            gh issue comment "$num" --body "$note" > /dev/null
-          fi
+          # A run annotation, not an issue: issues email the owner.
+          echo "::warning title=blocked::${note%%。*}。"
 
   # Start the next run on fresh runners shortly before this one's watchers
   # stop, so the hand-over leaves no gap.

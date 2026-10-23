@@ -1,27 +1,19 @@
 #!/usr/bin/env bash
 # The 10-second checks (surge.yml) for one region, kept going for
 # SURGE_MINUTES after stock was last seen there.
-#   surge.sh REGION want    exit 0 if stock is open now or was seen within SURGE_MINUTES
+#   surge.sh REGION want    exit 0 if stock was seen within SURGE_MINUTES
 #   surge.sh REGION start   start the 10-second checks unless they are running
 #   surge.sh REGION         start them if wanted and not running (a watchdog)
-# Stock is read from the stock issues: open while a store has stock, closed
-# when it is gone. Needs GH_TOKEN and GH_REPO.
+# When stock was last seen comes from state.sh (notify_stock.sh records it,
+# and each 10-second runner still seeing stock refreshes it). Needs GH_TOKEN
+# and GH_REPO.
 set -uo pipefail
 region=$1 mode=${2:-}
 minutes=${SURGE_MINUTES:-30}
-case "$region" in
-  cn) match='startswith("有货可自提（国内")' ;;
-  *) match='. == "有货可自提"' ;;
-esac
-
 want() {
-  local since n
-  since=$(date -u -d "-$minutes min" +%FT%TZ)
-  # The issues list (not search) so a just-created issue counts at once.
-  n=$(gh api "repos/$GH_REPO/issues?state=all&sort=updated&direction=desc&per_page=30" \
-        --jq "[.[] | select(.pull_request == null) | select(.title | $match)
-               | select(.state == \"open\" or .closed_at >= \"$since\")] | length") || return 1
-  [ "${n:-0}" -gt 0 ]
+  local at
+  at=$(bash "$(dirname "$0")/state.sh" seen-at "$region")
+  [ -n "$at" ] && [[ "$at" > "$(date -u -d "-$minutes min" +%FT%TZ)" ]]
 }
 
 running() {
