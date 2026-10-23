@@ -73,7 +73,7 @@ jobs:
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
         run: |
-          url=$(gh issue create --title "测试提醒" --body "@$OWNER 能收到这条，有货时也能收到。")
+          url=$(gh issue create --title "测试提醒" --body "能收到这条，有货时也能收到。")
           gh issue close "$url" > /dev/null
           python3 .github/scripts/push_bark.py "测试提醒" "能收到这条，有货时也能收到。"
 
@@ -171,7 +171,7 @@ jobs:
           else
             action="下一轮马上换新机器接上"
           fi
-          note="@$OWNER 国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
+          note="国内·$GROUP 在 $(date -u +%H:%M) UTC（北京时间 $(TZ=Asia/Shanghai date +%H:%M)）被 Apple 拦截，$action。[运行记录]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)"
           num=$(gh issue list --state open --limit 100 --json number,title \
                 --jq 'map(select(.title == env.BLOCK_ISSUE_TITLE)) | .[0].number // empty')
           if [ -z "$num" ]; then

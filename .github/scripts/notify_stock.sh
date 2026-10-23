@@ -19,7 +19,7 @@ num=$(gh issue list --state open --limit 100 --json number,title \
 if [ -s "$hits" ]; then
   sig=$(sha256sum "$hits" | cut -c1-12)
   link=${order:+下单：$order}
-  body="$(printf '@%s\n\n%s\n\n%s\n\n<!-- sig:%s -->' "$OWNER" "$(cat "$hits")" "$link" "$sig")"
+  body="$(printf '%s\n\n%s\n\n<!-- sig:%s -->' "$(cat "$hits")" "$link" "$sig")"
   if [ -z "$num" ]; then
     gh issue create --title "$STOCK_ISSUE_TITLE" --body "$body" > /dev/null
   else

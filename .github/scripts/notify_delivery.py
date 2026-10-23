@@ -49,7 +49,7 @@ def main(delivery_path, state_path):
     best, message = plan(current, best)
     if message:
         url = subprocess.run(["gh", "issue", "create", "--title", TITLE,
-                              "--body", f"@{os.environ['OWNER']}\n\n{message}"],
+                              "--body", message],
                              check=True, capture_output=True, text=True).stdout.strip()
         subprocess.run(["gh", "issue", "close", url], check=True, capture_output=True)
     os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
