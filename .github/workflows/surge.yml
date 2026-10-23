@@ -148,6 +148,13 @@ jobs:
               seen=$(date +%s)
               # For the regular checks' watchdog; one lane per group is enough.
               [ "$phase" = 0 ] && bash .github/scripts/state.sh seen "$REGION"
+              # For the group's other lanes, so none drops out while another
+              # still sees stock and the group keeps its 5-second pace.
+              bash .github/scripts/state.sh seen "$REGION-$group"
+            fi
+            if [ "${KEEP_UNTIL:-0}" -le "$until" ] && [ $(( $(date +%s) - seen )) -ge 1800 ]; then
+              at=$(bash .github/scripts/state.sh seen-at "$REGION-$group")
+              [ -n "$at" ] && [ "$(date -d "$at" +%s)" -gt "$seen" ] && seen=$(date -d "$at" +%s)
             fi
             if [ "${KEEP_UNTIL:-0}" -le "$until" ] && [ $(( $(date +%s) - seen )) -ge 1800 ]; then
               echo "30 分钟内没再看到货，这条到此结束"; touch handed
@@ -163,6 +170,7 @@ jobs:
               fi
               return 0
             fi
+            touch handing
             for i in 1 2 3; do
               gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
                 -f lane="$LANE" -f start_at="$until" -f last_seen="$seen" \
@@ -176,8 +184,9 @@ jobs:
             --pace "$PACE" --phase "$phase" --start-at "$start_at" --end-at "$until" --stop-on-block \
             --hits-file hits.txt --link-file link.txt \
             --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt"
-          if grep -q '^code=2' "$GITHUB_OUTPUT" && [ ! -e handed ]; then
+          if grep -q '^code=2' "$GITHUB_OUTPUT" && [ ! -e handed ] && [ ! -e handing ]; then
             # Refused: a fresh runner takes over the rest of this one's turn.
+            # Not once the hand-over has begun: that would start a second chain.
             kill "$pid" 2> /dev/null || true
             echo "rescue=1" >> "$GITHUB_OUTPUT"
           else
