@@ -413,6 +413,10 @@ def write_hits(path, hits, parts):
         for r in hits:
             where = r.store if not r.city or r.city in r.store else f"{r.city} {r.store}"
             f.write(f"- {where}：{label(r.part, parts)}\n")
+    # The same hits with store numbers, for a local auto-checkout (MAC_TRIGGER).
+    with open(path + ".json", "w", encoding="utf-8") as f:
+        json.dump([{"part": r.part, "store_number": r.store_number, "store": r.store,
+                    "city": r.city, "state": r.state} for r in hits], f, ensure_ascii=False)
 
 
 def order_link(region, part):

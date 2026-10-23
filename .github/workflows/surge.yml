@@ -119,6 +119,7 @@ jobs:
           TARGET: ${{ inputs.region == 'cn' && secrets.TARGET_CN || secrets.TARGET }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          MAC_TRIGGER: ${{ inputs.region == 'cn' && secrets.MAC_TRIGGER || '' }}
           START_AT: ${{ inputs.start_at }}
           UNTIL: ${{ inputs.until }}
           LAST_SEEN: ${{ inputs.last_seen }}
