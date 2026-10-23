@@ -138,6 +138,7 @@ jobs:
           AFTER_SURGE: ${{ inputs.after_surge }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          MAC_TRIGGER: ${{ secrets.MAC_TRIGGER }}
           UNTIL: ${{ inputs.until }}
         run: |
           # A push only smoke-tests one round; a rescue run watches until the

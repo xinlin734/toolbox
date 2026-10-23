@@ -251,6 +251,9 @@ class PickupTest(unittest.TestCase):
             check.write_hits(path, hits, parts)
             with open(path, encoding="utf-8") as f:
                 self.assertEqual(f.read(), "- Store A：Phone X 256GB Blue\n")
+            with open(path + ".json", encoding="utf-8") as f:
+                self.assertEqual(json.load(f), [{"part": A, "store_number": "R1", "store": "Store A",
+                                                 "city": "Store A", "state": "ZZ"}])
 
     def test_link_file_points_at_nearest_hit(self):
         hits = [r for r in check.parse_pickup(RESPONSE)[0] if r.available]

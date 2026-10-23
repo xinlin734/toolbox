@@ -8,7 +8,8 @@
 # Several runners see the same stock and it flickers, so a store and model
 # is pushed at most once per 30 minutes. The order link is the model page
 # written by check.py --link-file, else BUY_URL, the product's buy page.
-# Stock also starts the 10-second checks for SURGE_REGION, if set.
+# Stock also starts the 10-second checks for SURGE_REGION, if set, and goes
+# to MAC_TRIGGER, if set.
 # Needs GH_TOKEN, GH_REPO and STOCK_ISSUE_TITLE (the push title).
 set -uo pipefail
 dir=$(dirname "$0")
@@ -17,6 +18,12 @@ hits=${1:-hits.txt}
 order=$(head -n1 "${2:-link.txt}" 2>/dev/null || true)
 order=${order:-${BUY_URL:-}}
 region=${SURGE_REGION:-us}
+
+# First and before anything slow: hand the stores and part numbers to the
+# owner's auto-checkout, if MAC_TRIGGER (an ntfy topic URL) is set.
+if [ -n "${MAC_TRIGGER:-}" ] && [ -s "$hits.json" ]; then
+  curl -sS -m 5 -o /dev/null -H "Title: duo" --data-binary "@$hits.json" "$MAC_TRIGGER" || true
+fi
 
 bash "$dir/state.sh" seen "$region"
 pushed=$(bash "$dir/state.sh" pushed 30)
