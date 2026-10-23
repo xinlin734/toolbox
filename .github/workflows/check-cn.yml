@@ -130,6 +130,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           TARGET: ${{ secrets.TARGET_CN }}
           LOCATIONS: ${{ matrix.locations }}
+          GROUP: ${{ matrix.group }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
           UNTIL: ${{ inputs.until }}
@@ -141,10 +142,11 @@ jobs:
           elif [ -n "$UNTIL" ]; then duration=$(( UNTIL - now > 0 ? UNTIL - now : 0 ))
           else duration=$((WATCH_MINUTES * 60)); fi
           echo "until=$(( now + duration ))" >> "$GITHUB_OUTPUT"
-          # While the fast checks (surge.yml) run they cover every store every
-          # few seconds: step aside so they get the runners (GitHub runs at
-          # most 20 jobs at once). The next regular run looks again.
-          if [ "$duration" -gt 0 ] && bash .github/scripts/surge.sh cn running; then
+          # While this group's fast checks (surge.yml) run they cover its
+          # stores every few seconds: step aside so they get the runners
+          # (GitHub runs at most 20 jobs at once). The next regular run looks
+          # again. Other groups' lanes don't count: they end separately.
+          if [ "$duration" -gt 0 ] && bash .github/scripts/surge.sh cn running "$GROUP"; then
             echo "快速检查在跑，这一轮让出机器"
             echo "::notice title=rounds::rounds=0 failed=0 code=0 surge=1"
             echo "code=0" >> "$GITHUB_OUTPUT"; exit 0

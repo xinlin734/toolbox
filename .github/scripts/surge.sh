@@ -8,7 +8,7 @@
 # and each 10-second runner still seeing stock refreshes it). Needs GH_TOKEN
 # and GH_REPO.
 set -uo pipefail
-region=$1 mode=${2:-}
+region=$1 mode=${2:-} group=${3:-}
 minutes=${SURGE_MINUTES:-30}
 want() {
   local at
@@ -17,10 +17,13 @@ want() {
 }
 
 running() {
+  # With a group (北方 …), only that group's lanes count: lanes end on their
+  # own once their group has had no stock for 30 minutes.
   local n
   n=$(gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=30" \
         --jq "[.workflow_runs[] | select(.status != \"completed\")
-               | select(.display_title | startswith(\"surge $region\"))] | length") || return 1
+               | select(.display_title | startswith(\"surge $region\"))
+               | select(\"$group\" == \"\" or (.display_title | contains(\" $group:\")))] | length") || return 1
   [ "${n:-0}" -gt 0 ]
 }
 
@@ -35,7 +38,7 @@ start() {
 
 case "$mode" in
   want) want ;;
-  running) running ;;
+  running) running ;;  # surge.sh REGION running [GROUP]
   start) running || start ;;
   *) if want && ! running; then echo "有货后的 10 秒加密检查断了，重新启动"; start; fi ;;
 esac
