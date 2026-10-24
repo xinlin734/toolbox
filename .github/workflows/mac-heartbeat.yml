@@ -1,10 +1,9 @@
 name: mac-heartbeat
 
-# The owner's Mac mini, which checks out US stock handed to it through
-# MAC_TRIGGER, posts a heartbeat every few minutes to the same ntfy topic
-# with "-hb" appended. If none arrived in the last STALE_MINUTES, tell the
-# owner with an ordinary Bark push (no ringing: only a won checkout rings),
-# at most once an hour: a Mac that is offline or asleep misses every hit.
+# Warns the owner when the checkout Mac stops sending heartbeats
+# (.github/scripts/mac_heartbeat.sh). check-us.yml runs the same check on
+# every run, since GitHub's schedule fires late or not at all on a busy
+# repo; this is the backup.
 on:
   schedule:
     - cron: "*/10 * * * *"
@@ -29,17 +28,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MAC_TRIGGER: ${{ secrets.MAC_TRIGGER }}
           BARK_URL: ${{ secrets.BARK_URL }}
-        run: |
-          [ -n "$MAC_TRIGGER" ] || { echo "没设置 MAC_TRIGGER，跳过"; exit 0; }
-          beats=$(curl -sS -m 20 "${MAC_TRIGGER}-hb/json?poll=1&since=${STALE_MINUTES}m" | grep -c '"event":"message"' || true)
-          if [ "${beats:-0}" -gt 0 ]; then
-            echo "Mac 在线：最近 $STALE_MINUTES 分钟有 $beats 次心跳"; exit 0
-          fi
-          line="mac-heartbeat"
-          if bash .github/scripts/state.sh pushed 60 | grep -qxF "$line"; then
-            echo "Mac 没有心跳，这一小时已经提醒过"; exit 0
-          fi
-          echo "::warning::Mac 已经 $STALE_MINUTES 分钟没有心跳"
-          BARK_LEVEL=active python3 .github/scripts/push_bark.py "Mac 掉线了" \
-            "抢购用的 Mac mini 已经 $STALE_MINUTES 分钟没有报平安，有货也下不了单。看看它的网络、是不是睡眠或关机了。"
-          bash .github/scripts/state.sh push "$line"
+        run: bash .github/scripts/mac_heartbeat.sh

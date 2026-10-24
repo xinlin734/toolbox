@@ -137,6 +137,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/surge.sh "$SURGE_REGION"
 
+      # The checkout Mac's heartbeat (mac-heartbeat.yml), checked here too
+      # because this chain runs every few minutes.
+      - name: Check the checkout Mac is online
+        if: github.event_name != 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAC_TRIGGER: ${{ secrets.MAC_TRIGGER }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+        run: bash .github/scripts/mac_heartbeat.sh
+
       - name: Skip if another run is active
         id: gate
         env:
