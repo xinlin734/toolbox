@@ -68,6 +68,8 @@ env:
   # Lead time for the next runner to come up before a hand-over.
   LEAD_SECONDS: "30"
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
+  # Stock pushes ring the owner's phone (first) at any hour.
+  STOCK_BARK_QUIET: "-; Asia/Shanghai 23-9"
   GH_REPO: ${{ github.repository }}
   REGION: ${{ inputs.region }}
   KEEP_UNTIL: ${{ inputs.keep_until }}
