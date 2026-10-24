@@ -577,6 +577,10 @@ class PushBarkTest(unittest.TestCase):
         self.assertEqual(quiet["level"], "passive")
         self.assertNotIn("sound", quiet)
         self.assertNotIn("call", quiet)
+        plain = push_bark.payload("K", "t", "b", level="active")
+        self.assertEqual(plain["level"], "active")
+        self.assertNotIn("call", plain)
+        self.assertEqual(push_bark.payload("K", "t", "b", quiet=True, level="active")["level"], "passive")
 
     def test_unset_is_a_no_op(self):
         with mock.patch.dict(os.environ, {"BARK_URL": "", "BARK_URL_2": "", "BARK_QUIET": ""}), \

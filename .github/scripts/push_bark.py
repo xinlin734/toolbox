@@ -7,7 +7,8 @@ Recipients come from BARK_URL and BARK_URL_2. Each holds whatever the Bark
 app's Copy button gives (a curl command or a https://api.day.app/<key>/...
 address), several of them, or a bare key. Pushes are critical alerts: they
 ring for 30 seconds even when the phone is muted or in Focus, once the
-recipient allows Critical Alerts for Bark in iOS Settings.
+recipient allows Critical Alerts for Bark in iOS Settings. BARK_LEVEL=active
+sends an ordinary push instead (no ringing, no Focus bypass).
 
 BARK_QUIET sets quiet hours per recipient, in the same order, separated by
 ";" or newlines, e.g. "Europe/Paris 22-7; Asia/Tokyo 23-8". During quiet
@@ -64,10 +65,12 @@ def is_quiet(rule, now):
     return start <= hour < end if start < end else (hour >= start or hour < end)
 
 
-def payload(key, title, body, link="", quiet=False):
+def payload(key, title, body, link="", quiet=False, level="critical"):
     data = {"device_key": key, "title": title, "body": body, "group": "stock"}
     if quiet:
         data["level"] = "passive"
+    elif level == "active":
+        data["level"] = "active"
     else:
         data.update(level="critical", volume="8", sound="alarm", call="1")
     if link:
@@ -100,7 +103,8 @@ def main(title, body, link="", now=None):
         print(f"::add-mask::{key}")
         quiet = is_quiet(rules[source] if source < len(rules) else None, now)
         # Whether a phone is in its quiet hours stays out of the public log.
-        result = send(server, key, payload(key, title, body, link, quiet))
+        result = send(server, key, payload(key, title, body, link, quiet,
+                                           os.environ.get("BARK_LEVEL", "critical")))
         if result == "ok":
             print(f"已推送到 Bark（第 {i} 台）")
         else:

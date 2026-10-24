@@ -29,7 +29,8 @@ bash "$dir/state.sh" seen "$region"
 pushed=$(bash "$dir/state.sh" pushed 30)
 new=$(grep -vxF -f <(printf '%s\n' "$pushed") "$hits" || true)
 if [ -n "$new" ]; then
-  python3 "$dir/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
+  # An ordinary push: only a successful checkout on the owner's Mac rings.
+  BARK_LEVEL=active python3 "$dir/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
 点开直接进这款的购买页" "$order"
   while IFS= read -r line; do bash "$dir/state.sh" push "$line"; done <<< "$new"
 fi
