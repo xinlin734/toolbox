@@ -190,6 +190,7 @@ jobs:
           TARGET: ${{ secrets.TARGET }}
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
+          MAC_TRIGGER: ${{ secrets.MAC_TRIGGER }}
           UNTIL: ${{ inputs.until }}
         run: |
           # A push only smoke-tests one round; a rescue run watches until the
