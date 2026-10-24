@@ -58,6 +58,8 @@ env:
   MINUTE_FROM: "2026-10-23"
   # Bark quiet hours, per phone in BARK_URL / BARK_URL_2 order: silent pushes then.
   BARK_QUIET: "America/Los_Angeles 20-6; Asia/Shanghai 23-9"
+  # Stock pushes ring the owner's phone (first) at any hour.
+  STOCK_BARK_QUIET: "-; Asia/Shanghai 23-9"
   STOCK_ISSUE_TITLE: "有货可自提"
   GH_REPO: ${{ github.repository }}
   # Stock starts the 10-second checks for this region (surge.yml).
