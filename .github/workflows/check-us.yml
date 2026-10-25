@@ -66,8 +66,8 @@ env:
   # Stock starts the 10-second checks for this region (surge.yml).
   SURGE_REGION: us
   # The models the owner still wants ("A|B", any of them); alerts, the
-  # checkout Mac and delivery dates see only these.
-  MODELS: "256GB Star White|512GB Star White"
+  # checkout Mac and delivery dates see only these. Empty: every model.
+  MODELS: ""
 
 jobs:
   # Chained and rescue runs always proceed. Anything else steps aside while
