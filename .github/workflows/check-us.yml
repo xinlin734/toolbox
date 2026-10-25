@@ -5,9 +5,10 @@ name: check-us
 # broken chain. Short runs keep each runner well under the number of requests
 # after which Apple starts refusing one IP. If Apple refuses anyway, the run
 # logs it as a "blocked" run annotation and a rescue run on a fresh runner takes
-# over at once. Pickup is checked every minute (every 5 minutes while Apple
-# has it switched off, until MINUTE_FROM), every 30 seconds while a store
-# shows stock; delivery dates every 5 minutes.
+# over at once. Pickup is checked every 15 seconds (every 5 minutes while
+# Apple has it switched off, until MINUTE_FROM), about 16 queries per runner,
+# the load the 5-second checks (surge.yml) run at without being refused;
+# delivery dates every 5 minutes. Only the MODELS are watched.
 #
 # The repo is public: product and ZIP come from the TARGET secret
 # ("<product> <zip>"), and the checker's output stays on the runner.
@@ -64,6 +65,9 @@ env:
   GH_REPO: ${{ github.repository }}
   # Stock starts the 10-second checks for this region (surge.yml).
   SURGE_REGION: us
+  # The models the owner still wants ("A|B", any of them); alerts, the
+  # checkout Mac and delivery dates see only these.
+  MODELS: "256GB Star White|512GB Star White"
 
 jobs:
   # Chained and rescue runs always proceed. Anything else steps aside while
@@ -216,7 +220,7 @@ jobs:
           closed=(--closed-interval 300)
           [[ "$(TZ=America/Los_Angeles date +%F)" < "$MINUTE_FROM" ]] || closed=()
           bash .github/scripts/run_check.sh us "$TARGET" \
-            --watch 60 --hot-interval 30 --duration "$duration" "${closed[@]}" --stop-on-block \
+            --watch 15 --hot-interval 15 --duration "$duration" "${closed[@]}" --stop-on-block \
             --hits-file hits.txt --link-file link.txt \
             --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt" \
             --delivery --delivery-file delivery.json \
