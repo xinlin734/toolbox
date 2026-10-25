@@ -70,7 +70,7 @@ USER_AGENT = (
 RETRY_STATUSES = {500, 502, 503, 504}
 # Apple's refusals. Retrying them right away only extends the block.
 BLOCKED_STATUSES = {403, 429, 541}
-MIN_WATCH_SECONDS = 30
+MIN_WATCH_SECONDS = 15
 BLOCKED_COOLDOWN_SECONDS = 300
 DELIVERY_EVERY_SECONDS = 300  # ship dates move slowly; no need to ask every minute
 
@@ -224,11 +224,15 @@ def learn_titles(parts, rows, product):
 
 
 def keep_model(parts, text):
-    """Drop parts whose title lacks text, e.g. "Pro Max"; parts with no title yet stay."""
+    """Drop parts whose title lacks text, e.g. "Pro Max"; parts with no title yet stay.
+
+    Alternatives separated by "|" keep a part whose title has any of them,
+    e.g. "256GB Star White|512GB Star White".
+    """
     # Apple's titles often put a no-break space inside names such as "Pro Max".
-    text = " ".join(text.lower().split())
+    wanted = [" ".join(t.lower().split()) for t in text.split("|") if t.strip()]
     for part in [p for p, meta in parts.items()
-                 if meta.get("title") and text not in " ".join(meta["title"].lower().split())]:
+                 if meta.get("title") and not any(t in " ".join(meta["title"].lower().split()) for t in wanted)]:
         del parts[part]
 
 
@@ -572,7 +576,7 @@ def parse_args(argv=None):
     p.add_argument("--location", required=True,
                    help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”。多个地点用分号隔开，结果合并去重")
     p.add_argument("--city", help="只看这个城市的门店（附近搜索可能会带出别的城市）")
-    p.add_argument("--model", help="只看名称里带这段文字的型号，例如 \"Pro Max\"")
+    p.add_argument("--model", help="只看名称里带这段文字的型号，例如 \"Pro Max\"；几段用 | 隔开，带任一段都算")
     p.add_argument("--parts", help="手动指定型号，逗号分隔（跳过自动抓取）")
     p.add_argument("--all", action="store_true", help="显示每家店每个型号的状态（包括没货的）")
     p.add_argument("--list-parts", action="store_true", help="只列出找到的型号，不查库存")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run check.py for one target and put only counts in the public log.
 #   run_check.sh REGION "<product> <location>" [check.py flags...]
-# Optional env LOCATIONS: see below.
+# Optional env LOCATIONS and MODELS: see below.
 # Writes code=<exit code> to $GITHUB_OUTPUT: 0 ok, 2 blocked or failed, 4 not configured.
 set -uo pipefail
 region=$1 target=$2
@@ -31,6 +31,9 @@ else
   # Mainland China: "省 市" — keep only stores in that city.
   [ "$region" = cn ] && args+=(--city "${location##* }")
 fi
+# MODELS, if set, keeps only those models ("A|B"): alerts, the checkout Mac
+# and delivery dates see nothing else.
+[ -n "${MODELS:-}" ] && args+=(--model "$MODELS")
 python3 check.py "${args[@]}" "$@" > run.log 2>&1
 code=$?
 echo "code=$code" >> "$GITHUB_OUTPUT"

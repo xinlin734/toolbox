@@ -21,7 +21,7 @@ push_bark = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(push_bark)
 
 PRODUCT = "phone-x"
-A, B, C = "MX001LL/A", "MX002LL/A", "MX003LL/A"
+A, B, C, D = "MX001LL/A", "MX002LL/A", "MX003LL/A", "MX004LL/A"
 ACCESSORY = "MX999LL/A"
 
 BUY_PAGE = f"""
@@ -271,6 +271,12 @@ class ModelFilterTest(unittest.TestCase):
     def test_keep_model_matches_title_text(self):
         parts = {A: {"title": "Phone X Pro\u00a0Max 256GB"}, B: {"title": "Phone X Pro 256GB"}, C: {}}
         check.keep_model(parts, "pro max")
+        self.assertEqual(list(parts), [A, C])
+
+    def test_keep_model_any_of_several(self):
+        parts = {A: {"title": "Phone X 256GB Star White"}, B: {"title": "Phone X 256GB Night Sky"},
+                 C: {"title": "Phone X 512GB Star White"}, D: {"title": "Phone X 1TB Star White"}}
+        check.keep_model(parts, "256GB Star White|512GB Star White")
         self.assertEqual(list(parts), [A, C])
 
 
