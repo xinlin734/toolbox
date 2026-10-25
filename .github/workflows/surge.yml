@@ -123,7 +123,7 @@ jobs:
           BARK_URL_2: ${{ secrets.BARK_URL_2 }}
           MAC_TRIGGER: ${{ inputs.region == 'us' && secrets.MAC_TRIGGER || '' }}
           # The same models as check-us.yml watches.
-          MODELS: ${{ inputs.region == 'us' && '256GB Star White|512GB Star White' || '' }}
+          MODELS: ${{ inputs.region == 'us' && '256GB|512GB|1TB' || '' }}
           START_AT: ${{ inputs.start_at }}
           UNTIL: ${{ inputs.until }}
           LAST_SEEN: ${{ inputs.last_seen }}

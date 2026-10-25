@@ -67,7 +67,7 @@ env:
   SURGE_REGION: us
   # The models the owner still wants ("A|B", any of them); alerts, the
   # checkout Mac and delivery dates see only these.
-  MODELS: "256GB Star White|512GB Star White"
+  MODELS: "256GB|512GB|1TB"
 
 jobs:
   # Chained and rescue runs always proceed. Anything else steps aside while
