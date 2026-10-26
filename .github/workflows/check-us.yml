@@ -54,6 +54,10 @@ permissions:
 
 env:
   WATCH_MINUTES: "4"
+  # The next run is started this many seconds before this one's watcher
+  # stops: GitHub can take two minutes or more to give a run a runner, and
+  # an early run just waits for this one to finish.
+  LEAD_SECONDS: "150"
   # From this day (Los Angeles time) pickup is asked every minute even while
   # Apple still shows it switched off.
   MINUTE_FROM: "2026-10-23"
@@ -187,7 +191,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREV: ${{ inputs.prev_run }}
         run: |
-          for i in $(seq 30); do
+          for i in $(seq $(( (LEAD_SECONDS + 60) / 3 ))); do
             [ "$(gh run view "$PREV" --json status --jq .status)" = completed ] && exit 0
             sleep 3
           done
@@ -275,12 +279,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREV: ${{ inputs.prev_run }}
         run: |
-          for i in $(seq 30); do
+          for i in $(seq $(( (LEAD_SECONDS + 60) / 3 ))); do
             [ -z "$PREV" ] && break
             [ "$(gh run view "$PREV" --json status --jq .status)" = completed ] && break
             sleep 3
           done
-          sleep $((WATCH_MINUTES * 60 - 45))
+          sleep $((WATCH_MINUTES * 60 - LEAD_SECONDS))
           for i in 1 2 3; do
             gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" \
               -f chained=true -f prev_run="$GITHUB_RUN_ID" && break
