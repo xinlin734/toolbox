@@ -3,13 +3,14 @@
 #   mac_heartbeat.sh
 # The owner's Mac mini, which checks out US stock handed to it through
 # MAC_TRIGGER, posts a heartbeat every few minutes to the same ntfy topic
-# with "-hb" appended. If none arrived in the last STALE_MINUTES (default
-# 15), send an ordinary Bark push, at most once an hour: a Mac that is
+# with "-hb" appended (every 15 minutes, which keeps it under ntfy's free
+# daily message quota). If none arrived in the last STALE_MINUTES (default
+# 40), send an ordinary Bark push, at most once an hour: a Mac that is
 # offline or asleep misses every hit.
 # Needs GH_TOKEN and GH_REPO (state.sh), MAC_TRIGGER and BARK_URL.
 set -uo pipefail
 dir=$(dirname "$0")
-stale=${STALE_MINUTES:-15}
+stale=${STALE_MINUTES:-40}
 [ -n "${MAC_TRIGGER:-}" ] || { echo "没设置 MAC_TRIGGER，跳过"; exit 0; }
 # Only a successful answer with no heartbeat in it means the Mac is quiet;
 # an ntfy error or timeout says nothing about the Mac.
