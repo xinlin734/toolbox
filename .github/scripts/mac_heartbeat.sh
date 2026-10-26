@@ -11,7 +11,17 @@ set -uo pipefail
 dir=$(dirname "$0")
 stale=${STALE_MINUTES:-15}
 [ -n "${MAC_TRIGGER:-}" ] || { echo "没设置 MAC_TRIGGER，跳过"; exit 0; }
-beats=$(curl -sS -m 20 "${MAC_TRIGGER}-hb/json?poll=1&since=${stale}m" | grep -c '"event":"message"' || true)
+# Only a successful answer with no heartbeat in it means the Mac is quiet;
+# an ntfy error or timeout says nothing about the Mac.
+ok=""
+for i in 1 2 3; do
+  body=$(curl -sS -f -m 20 "${MAC_TRIGGER}-hb/json?poll=1&since=${stale}m") && { ok=1; break; }
+  [ "$i" -lt 3 ] && sleep 5
+done
+if [ -z "$ok" ]; then
+  echo "::warning::读不到心跳（ntfy 出错），这一轮不判断 Mac 是否在线"; exit 0
+fi
+beats=$(printf '%s\n' "$body" | grep -c '"event":"message"' || true)
 if [ "${beats:-0}" -gt 0 ]; then
   echo "Mac 在线：最近 $stale 分钟有 $beats 次心跳"; exit 0
 fi
