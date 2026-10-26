@@ -56,8 +56,9 @@ env:
   WATCH_MINUTES: "4"
   # The next run is started this many seconds before this one's watcher
   # stops: GitHub can take two minutes or more to give a run a runner, and
-  # an early run just waits for this one to finish.
-  LEAD_SECONDS: "150"
+  # an early run just waits for this one to finish. Waits of four minutes
+  # were seen (10/26), so the next run is asked for 30 s into this one.
+  LEAD_SECONDS: "210"
   # From this day (Los Angeles time) pickup is asked every minute even while
   # Apple still shows it switched off.
   MINUTE_FROM: "2026-10-23"
