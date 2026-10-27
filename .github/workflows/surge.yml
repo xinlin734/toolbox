@@ -63,8 +63,10 @@ permissions:
 
 env:
   # Each runner asks every place every PACE seconds; lanes STEP seconds apart.
-  PACE: "15"
-  STEP: "5"
+  # The US runs eight lanes 2 seconds apart (each runner still asks about
+  # every 16 seconds), so it is asked every 2 seconds.
+  PACE: ${{ inputs.region == 'us' && '16' || '15' }}
+  STEP: ${{ inputs.region == 'us' && '2' || '5' }}
   CN_SECONDS: "60"
   US_SECONDS: "240"
   # Lead time for the next runner to come up before a hand-over.
