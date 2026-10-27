@@ -265,7 +265,7 @@ jobs:
               --watch 15 --hot-interval 15 --duration 60 --stop-on-block \
               --hits-file hits.txt --link-file link.txt \
               --on-change "bash .github/scripts/notify_stock.sh hits.txt link.txt"
-            grep -q '^code=2' "$GITHUB_OUTPUT" && break
+            if grep -q '^code=2' "$GITHUB_OUTPUT"; then break; fi
           done
 
       - name: Save state
