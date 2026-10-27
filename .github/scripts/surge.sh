@@ -10,8 +10,13 @@
 set -uo pipefail
 region=$1 mode=${2:-} group=${3:-}
 minutes=${SURGE_MINUTES:-30}
+# The owner wants the US asked every 5 seconds at all times (2026-10-27), so
+# its 5-second lanes never stop for lack of stock and the watchdog keeps
+# them going.
+always=$([ "$region" = us ] && echo 1)
 want() {
   local at
+  [ -n "$always" ] && return 0
   at=$(bash "$(dirname "$0")/state.sh" seen-at "$region")
   [ -n "$at" ] && [[ "$at" > "$(date -u -d "-$minutes min" +%FT%TZ)" ]]
 }
@@ -36,7 +41,8 @@ running() {
 
 start() {
   for i in 1 2 3; do
-    gh workflow run surge.yml --ref "${GITHUB_REF_NAME:-main}" -f region="$region" && return 0
+    gh workflow run surge.yml --ref "${GITHUB_REF_NAME:-main}" -f region="$region" \
+      ${always:+-f keep_until=9999999999} && return 0
     sleep 5
   done
   echo "::warning::没能启动 10 秒加密检查" >&2
