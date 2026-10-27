@@ -29,11 +29,15 @@ bash "$dir/state.sh" seen "$region"
 pushed=$(bash "$dir/state.sh" pushed 30)
 new=$(grep -vxF -f <(printf '%s\n' "$pushed") "$hits" || true)
 if [ -n "$new" ]; then
-  # A critical push. STOCK_BARK_QUIET, if set, replaces BARK_QUIET here, so
-  # stock can ring a phone even in its quiet hours.
-  BARK_QUIET=${STOCK_BARK_QUIET-${BARK_QUIET:-}} python3 "$dir/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
+  # Only the first runner to claim a line pushes it (state.sh claim).
+  won=""
+  while IFS= read -r line; do bash "$dir/state.sh" claim "$line" && won=1; done <<< "$new"
+  if [ -n "$won" ]; then
+    # A critical push. STOCK_BARK_QUIET, if set, replaces BARK_QUIET here, so
+    # stock can ring a phone even in its quiet hours.
+    BARK_QUIET=${STOCK_BARK_QUIET-${BARK_QUIET:-}} python3 "$dir/push_bark.py" "$STOCK_ISSUE_TITLE" "$(cat "$hits")
 点开直接进这款的购买页" "$order"
-  while IFS= read -r line; do bash "$dir/state.sh" push "$line"; done <<< "$new"
+  fi
 fi
 # Then ask every 10 seconds for the next half hour.
 if [ -n "${SURGE_REGION:-}" ]; then
