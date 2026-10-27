@@ -6,6 +6,8 @@ run-name: surge ${{ inputs.region }} ${{ inputs.chain }} ${{ inputs.lane }}
 # US at every store near the ZIP. check-cn / check-us start this through
 # surge.sh when they see stock, and restart it if it breaks. Started by hand
 # with keep_until, it also asks every 5 seconds until then without stock.
+# The US lanes always carry keep_until (surge.sh), so the US is asked every
+# 5 seconds at all times, stock or not.
 # Meanwhile check-cn steps aside so these get the runners.
 #
 # One runner asking that often would be refused by Apple within a minute or
