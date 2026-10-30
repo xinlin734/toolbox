@@ -180,11 +180,14 @@ jobs:
               return 0
             fi
             touch handing
-            for i in 1 2 3; do
+            # GitHub sometimes answers 500 for a minute or more; keep trying
+            # for about two and a half minutes before the chain is left to the
+            # watchdog (surge.sh).
+            for i in 1 2 3 4 5 6 7; do
               gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
                 -f lane="$LANE" -f start_at="$until" -f last_seen="$seen" \
                 ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && { touch handed; return 0; }
-              sleep 5
+              sleep $(( i * 5 ))
             done
           }
           handover & pid=$!
