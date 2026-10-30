@@ -200,7 +200,11 @@ jobs:
             sleep 3
           done
 
+      # The cache service sometimes hangs; a missing state only costs a
+      # repeated alert, a hung step stalls the whole chain.
       - name: Restore state
+        timeout-minutes: 1
+        continue-on-error: true
         uses: actions/cache/restore@v4
         with:
           path: state
@@ -270,6 +274,7 @@ jobs:
 
       - name: Save state
         if: hashFiles('state/best.json') != ''
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
