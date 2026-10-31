@@ -109,7 +109,9 @@ jobs:
   check:
     if: inputs.lane != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A run lasts about 4.5 minutes (up to ~7 with a slow hand-over). One that
+    # hangs is cut off here so the watchdog (surge.sh) can restart its lane.
+    timeout-minutes: 8
     env:
       SURGE_REGION: ${{ inputs.region }}
       LANE: ${{ inputs.lane }}
