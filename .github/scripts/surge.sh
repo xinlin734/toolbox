@@ -41,8 +41,9 @@ running() {
 }
 
 # The lanes (surge_lanes.sh) with no run in progress or queued. Asked twice,
-# 20 seconds apart, so a lane caught between two runs of its chain (or a
-# rescue that is still being created) is not taken for a gap.
+# 45 seconds apart, so a lane caught between two runs of its chain (a slow
+# hand-over can take half a minute, or a rescue that is still being created)
+# is not taken for a gap.
 missing() {
   local want have again
   want=$(bash "$(dirname "$0")/surge_lanes.sh" "$region" | jq -r '.[].lane' | sort)
@@ -54,7 +55,7 @@ missing() {
   }
   have=$(lanes) || return 1
   [ -z "$(comm -23 <(echo "$want") <(echo "$have"))" ] && return 0
-  sleep 20
+  sleep 45
   again=$(lanes) || return 1
   comm -23 <(echo "$want") <(sort -u <(echo "$have"; echo "$again"))
 }
