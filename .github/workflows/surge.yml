@@ -181,6 +181,16 @@ jobs:
               fi
               return 0
             fi
+            # A watchdog restart that raced a slow hand-over can leave two
+            # chains on one lane, asking twice as often from one phase. The
+            # chain that sorts after the other one ends here.
+            other=$(gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=50" \
+              --jq ".workflow_runs[] | select(.status != \"completed\") | .display_title
+                    | select(startswith(\"surge $REGION \") and endswith(\" $LANE\"))
+                    | split(\" \")[2] | select(. != \"$CHAIN\")" 2> /dev/null | sort | head -1)
+            if [ -n "$other" ] && [[ "$other" < "$CHAIN" ]]; then
+              echo "$LANE 还有另一条接力（$other）在跑，这条到此结束"; touch handed; return 0
+            fi
             touch handing
             # GitHub sometimes answers 500 for a minute or more; keep trying
             # for about two and a half minutes before the chain is left to the
