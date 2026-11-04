@@ -198,9 +198,22 @@ jobs:
             for i in 1 2 3 4 5 6 7; do
               gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
                 -f lane="$LANE" -f start_at="$until" -f last_seen="$seen" \
-                ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && { touch handed; return 0; }
+                ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && { touch handed; break; }
               sleep $(( i * 5 ))
             done
+            # The regular checks (check-us.yml) are a chain too, and their
+            # 5-minute schedule backup can stop firing while GitHub is
+            # degraded. One lane restarts that chain when no run of it is
+            # left; a spare start just finds the chain running and skips.
+            if [ -e handed ] && [ "$REGION" = us ] && [ "$phase" = 0 ]; then
+              n=$(gh api "repos/$GH_REPO/actions/workflows/check-us.yml/runs?per_page=10" \
+                    --jq '[.workflow_runs[] | select(.status != "completed" and .event != "push")] | length' 2> /dev/null) || n=
+              if [ "$n" = 0 ]; then
+                echo "::warning::常规检查（check-us）断了，重新启动"
+                gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" || true
+              fi
+            fi
+            return 0
           }
           handover & pid=$!
 
