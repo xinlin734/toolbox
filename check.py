@@ -316,14 +316,14 @@ def split_locations(location):
     return [loc.strip() for loc in location.split(";") if loc.strip()]
 
 
-def check_once(client, parts, location, batch_size=8, city=None):
+def check_once(client, parts, location, batch_size=8, city=None, nearest=None):
     """Raises Blocked if Apple refuses the queries; that is not the same as no stock.
 
     location may list several places separated by ";": each nearby search
     reaches only the closest stores, so a whole country takes a handful.
     city keeps only stores in that city: a nearby search can reach the next one.
     """
-    return merge_rows(check_locations(client, parts, split_locations(location), batch_size), city)
+    return merge_rows(check_locations(client, parts, split_locations(location), batch_size), city, nearest)
 
 
 def check_locations(client, parts, locations, batch_size=8):
@@ -337,7 +337,7 @@ def check_locations(client, parts, locations, batch_size=8):
     return results
 
 
-def merge_rows(results, city=None):
+def merge_rows(results, city=None, nearest=None):
     """Combine per-location results, counting a store reached from two places once."""
     rows, notices, seen = [], set(), set()
     for loc_rows, loc_notices in results.values():
@@ -351,6 +351,13 @@ def merge_rows(results, city=None):
         rows = [r for r in rows if r.city.strip() == city]
         if nearby and not rows:
             print(f"⚠️  附近 {len(nearby)} 家店都不在{city}", file=sys.stderr)
+    if nearest:
+        # Only the nearest few stores, the ones the owner would drive to; a
+        # nearby search reaches a dozen. Store numbers would give away where
+        # the owner lives in this public repo, so it is a count.
+        by_distance = sorted({(r.distance if r.distance is not None else 1e9, r.store_number) for r in rows})
+        keep = {number for _, number in by_distance[:nearest]}
+        rows = [r for r in rows if r.store_number in keep]
     rows.sort(key=lambda r: (r.distance if r.distance is not None else 1e9, r.store, r.part))
     return rows, notices
 
@@ -547,7 +554,7 @@ def pace_watch(client, parts, args):
                 continue
             if len(latest) < len(locations):
                 continue  # one full round first, so a partial view never closes an alert
-            rows, notices = merge_rows(latest, args.city)
+            rows, notices = merge_rows(latest, args.city, args.nearest)
             learn_titles(parts, rows, args.product)
             if args.model:
                 keep_model(parts, args.model)
@@ -576,6 +583,7 @@ def parse_args(argv=None):
     p.add_argument("--location", required=True,
                    help="美国填邮编；中国大陆填“省 市”，例如“浙江 杭州”。多个地点用分号隔开，结果合并去重")
     p.add_argument("--city", help="只看这个城市的门店（附近搜索可能会带出别的城市）")
+    p.add_argument("--nearest", type=int, metavar="N", help="只看最近的 N 家店")
     p.add_argument("--model", help="只看名称里带这段文字的型号，例如 \"Pro Max\"；几段用 | 隔开，带任一段都算")
     p.add_argument("--parts", help="手动指定型号，逗号分隔（跳过自动抓取）")
     p.add_argument("--all", action="store_true", help="显示每家店每个型号的状态（包括没货的）")
@@ -632,7 +640,7 @@ def main(argv=None):
 
     if not args.watch:
         try:
-            rows, notices = check_once(client, parts, args.location, args.batch_size, args.city)
+            rows, notices = check_once(client, parts, args.location, args.batch_size, args.city, args.nearest)
         except Blocked as e:
             print(f"被 Apple 拦截了（{e}）：这不代表没货。过 10 分钟以上再试，或换个网络。", file=sys.stderr)
             return 2
@@ -672,7 +680,7 @@ def main(argv=None):
                 else:
                     batch, full_round_at = locations, round_started
                 latest.update(check_locations(client, parts, batch, args.batch_size))
-                rows, notices = merge_rows(latest, args.city)
+                rows, notices = merge_rows(latest, args.city, args.nearest)
                 learn_titles(parts, rows, args.product)
                 if args.model:
                     keep_model(parts, args.model)

@@ -75,7 +75,12 @@ env:
   SURGE_REGION: us
   # The models the owner still wants ("A|B", any of them); alerts, the
   # checkout Mac and delivery dates see only these. Empty: every model.
-  MODELS: ""
+  # 2026-11-05: the owner wants only the 256GB white one.
+  MODELS: "256GB Star White"
+  # Only the nearest few stores count (empty: every store the nearby search
+  # reaches). 2026-11-05: the owner's three nearest by drive time are also
+  # the three nearest by Apple's distance.
+  NEAREST: "3"
 
 jobs:
   # Chained and rescue runs always proceed. Anything else steps aside while

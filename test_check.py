@@ -179,6 +179,14 @@ class PickupTest(unittest.TestCase):
         self.assertIn("parts.3=MX103LL%2FA", client.urls[0])
         self.assertEqual(rows[0].store, "Store A")  # nearest first
 
+    def test_check_once_keeps_only_nearest_stores(self):
+        client = FakeClient({check.PICKUP_URL: RESPONSE})
+        with quiet():
+            rows, _ = check.check_once(client, {A: {}}, "10001")
+            kept, _ = check.check_once(client, {A: {}}, "10001", nearest=1)
+        self.assertGreater(len({r.store_number for r in rows}), 1)
+        self.assertEqual({r.store_number for r in kept}, {rows[0].store_number})
+
     def test_falls_back_to_legacy_when_no_stores_or_blocked(self):
         for first in ({"body": {"stores": []}}, check.Blocked("HTTP 541")):
             client = FakeClient({check.PICKUP_URL: first, check.FULFILLMENT_URL: LEGACY_RESPONSE})
