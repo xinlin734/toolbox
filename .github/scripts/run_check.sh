@@ -34,6 +34,8 @@ fi
 # MODELS, if set, keeps only those models ("A|B"): alerts, the checkout Mac
 # and delivery dates see nothing else.
 [ -n "${MODELS:-}" ] && args+=(--model "$MODELS")
+# NEAREST, if set, keeps only that many of the nearest stores.
+[ -n "${NEAREST:-}" ] && args+=(--nearest "$NEAREST")
 python3 check.py "${args[@]}" "$@" > run.log 2>&1
 code=$?
 echo "code=$code" >> "$GITHUB_OUTPUT"
