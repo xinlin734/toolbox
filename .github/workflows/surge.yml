@@ -184,7 +184,9 @@ jobs:
             # A watchdog restart that raced a slow hand-over can leave two
             # chains on one lane, asking twice as often from one phase. The
             # chain that sorts after the other one ends here.
-            other=$(gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=50" \
+            # Every GitHub call here is time-limited: one that hangs would hold
+            # up the hand-over until the job is cut off and the lane breaks.
+            other=$(timeout 20 gh api "repos/$GH_REPO/actions/workflows/surge.yml/runs?per_page=50" \
               --jq ".workflow_runs[] | select(.status != \"completed\") | .display_title
                     | select(startswith(\"surge $REGION \") and endswith(\" $LANE\"))
                     | split(\" \")[2] | select(. != \"$CHAIN\")" 2> /dev/null | sort | head -1)
@@ -196,7 +198,7 @@ jobs:
             # for about two and a half minutes before the chain is left to the
             # watchdog (surge.sh).
             for i in 1 2 3 4 5 6 7; do
-              gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
+              timeout 30 gh workflow run surge.yml --ref "$GITHUB_REF_NAME" -f region="$REGION" -f chain="$CHAIN" \
                 -f lane="$LANE" -f start_at="$until" -f last_seen="$seen" \
                 ${KEEP_UNTIL:+-f keep_until="$KEEP_UNTIL"} && { touch handed; break; }
               sleep $(( i * 5 ))
@@ -206,11 +208,11 @@ jobs:
             # degraded. One lane restarts that chain when no run of it is
             # left; a spare start just finds the chain running and skips.
             if [ -e handed ] && [ "$REGION" = us ] && [ "$phase" = 0 ]; then
-              n=$(gh api "repos/$GH_REPO/actions/workflows/check-us.yml/runs?per_page=10" \
+              n=$(timeout 20 gh api "repos/$GH_REPO/actions/workflows/check-us.yml/runs?per_page=10" \
                     --jq '[.workflow_runs[] | select(.status != "completed" and .event != "push")] | length' 2> /dev/null) || n=
               if [ "$n" = 0 ]; then
                 echo "::warning::常规检查（check-us）断了，重新启动"
-                gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" || true
+                timeout 30 gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" || true
               fi
             fi
             return 0
