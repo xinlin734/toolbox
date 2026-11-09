@@ -206,9 +206,12 @@ jobs:
             done
             # The regular checks (check-us.yml) are a chain too, and their
             # 5-minute schedule backup can stop firing while GitHub is
-            # degraded. One lane restarts that chain when no run of it is
+            # degraded. Every US lane restarts that chain when no run of it is
             # left; a spare start just finds the chain running and skips.
-            if [ -e handed ] && [ "$REGION" = us ] && [ "$phase" = 0 ]; then
+            # Not only one lane: in an Actions outage (2026-11-09) the lanes
+            # that died included that one, and check-us, which restarts the
+            # lanes, was down too, so nothing brought either back.
+            if [ -e handed ] && [ "$REGION" = us ]; then
               n=$(timeout 20 gh api "repos/$GH_REPO/actions/workflows/check-us.yml/runs?per_page=10" \
                     --jq '[.workflow_runs[] | select(.status != "completed" and .event != "push")] | length' 2> /dev/null) || n=
               if [ "$n" = 0 ]; then
