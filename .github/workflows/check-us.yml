@@ -319,6 +319,11 @@ jobs:
       github.event_name != 'push' && needs.gate.outputs.busy != 'true'
       && !inputs.rescue
     runs-on: ubuntu-latest
+    # A GitHub call that hangs (2026-11-10, during a GitHub incident) kept
+    # this job, and so the whole chain, waiting for 35 minutes: the default
+    # limit is 6 hours. Cut it off so the 5-second lanes see no run left and
+    # restart the chain.
+    timeout-minutes: 12
     steps:
       # Time the hand-over from when this run's watcher starts, which is when
       # the previous run has finished.
@@ -327,9 +332,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREV: ${{ inputs.prev_run }}
         run: |
-          for i in $(seq $(( (LEAD_SECONDS + 60) / 3 ))); do
+          deadline=$(( $(date +%s) + LEAD_SECONDS + 60 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
             [ -z "$PREV" ] && break
-            [ "$(gh run view "$PREV" --json status --jq .status)" = completed ] && break
+            [ "$(timeout 20 gh run view "$PREV" --json status --jq .status)" = completed ] && break
             sleep 3
           done
           sleep $((WATCH_MINUTES * 60 - LEAD_SECONDS))
@@ -337,7 +343,7 @@ jobs:
           # two and a half minutes (the 5-second lanes, surge.yml, also
           # restart this chain if it breaks).
           for i in 1 2 3 4 5 6 7; do
-            gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" \
+            timeout 30 gh workflow run check-us.yml --ref "$GITHUB_REF_NAME" \
               -f chained=true -f prev_run="$GITHUB_RUN_ID" && break
             sleep $(( i * 5 ))
           done
